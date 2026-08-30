@@ -1,10 +1,10 @@
 const EXTENSION_NAME = '🧩预设工坊（Gecko兼容测试版）';
-const EXTENSION_VERSION = '2.74.1';
+const EXTENSION_VERSION = '2.75.1';
 const RUNTIME_ID = 'TH-script--🧩预设工坊（Gecko 兼容扩展）--45dd76e4-8cce-41df-921f-9ebc856a9f25';
 const LEGACY_IFRAME_PREFIX = 'TH-script--🧩预设工坊';
 const HELPER_WAIT_TIMEOUT = 60_000;
 const LEGACY_GRACE_PERIOD = 3_000;
-const VERSION_CHECK_INTERVAL = 3_000;
+const VERSION_CHECK_INTERVAL = 30_000;
 
 let versionCheckTimer = null;
 let versionCheckBusy = false;
@@ -30,7 +30,7 @@ async function readInstalledVersion() {
 }
 
 async function checkForInstalledUpdate() {
-  if (versionCheckBusy) return;
+  if (versionCheckBusy || document.visibilityState === 'hidden') return;
   versionCheckBusy = true;
   try {
     const nextVersion = await readInstalledVersion();
@@ -38,11 +38,13 @@ async function checkForInstalledUpdate() {
 
     /* 给扩展更新器一点时间写完全部文件，再确认一次，避免在更新中途刷新。 */
     await sleep(900);
+    if (document.visibilityState === 'hidden') return;
     if (await readInstalledVersion() !== nextVersion) return;
 
     stopVersionWatcher();
     notify('info', `扩展已更新至 v${nextVersion}，正在自动刷新酒馆`);
     await sleep(450);
+    globalThis.__PMM_PERFORMANCE_GUARD_V275__?.markReloadReason?.('extension-update');
     globalThis.location.reload();
   } catch (error) {
     console.debug(`[${EXTENSION_NAME}] 暂未检测到可自动载入的新版本。`, error);
@@ -51,16 +53,23 @@ async function checkForInstalledUpdate() {
   }
 }
 
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible') void checkForInstalledUpdate();
+}
+
 function startVersionWatcher() {
   if (versionCheckTimer !== null) return;
   void checkForInstalledUpdate();
   versionCheckTimer = globalThis.setInterval(() => void checkForInstalledUpdate(), VERSION_CHECK_INTERVAL);
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 }
 
 function stopVersionWatcher() {
-  if (versionCheckTimer === null) return;
-  globalThis.clearInterval(versionCheckTimer);
-  versionCheckTimer = null;
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
+  if (versionCheckTimer !== null) {
+    globalThis.clearInterval(versionCheckTimer);
+    versionCheckTimer = null;
+  }
 }
 
 function findLegacyRuntime() {
@@ -95,7 +104,7 @@ async function waitForTavernHelper() {
 function buildRuntimeDocument() {
   const parentJqueryUrl = new URL('../bridge/parent-jquery.js', import.meta.url).href;
   const predefineUrl = new URL('../bridge/predefine.js', import.meta.url).href;
-  const workshopUrl = new URL('./workshop-v2.74.js', import.meta.url).href;
+  const workshopUrl = new URL('./workshop-v2.75.js', import.meta.url).href;
 
   return `<!DOCTYPE html>
 <html>
@@ -168,7 +177,7 @@ export async function startPresetWorkshop() {
   document.body.appendChild(iframe);
 
   iframe.addEventListener('load', () => {
-    console.info(`[${EXTENSION_NAME}] GitHub 扩展运行环境已启动（v2.74 Gecko）`);
+    console.info(`[${EXTENSION_NAME}] GitHub 扩展运行环境已启动（v2.75 Gecko）`);
   }, { once: true });
 
   return iframe;
