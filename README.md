@@ -1,6 +1,8 @@
-# 🧩预设工坊
+# 🧩预设工坊（Gecko 兼容测试版）
 
-适用于 SillyTavern 的双端预设管理扩展，首个扩展版本由酒馆助手脚本 **v2.53** 无损迁移而来，当前版本为 **v2.68**。
+这是专供 Firefox、雨见等 Gecko／GeckoView 手机浏览器测试的兼容版本。正常的 Chrome、Safari、WebView 用户请安装主仓库版本。
+
+请勿与主仓库版同时安装；两个版本共用原有预设工坊数据。
 
 ## 依赖
 
@@ -14,12 +16,12 @@
 
 1. 打开 SillyTavern 的“扩展”。
 2. 选择“安装扩展”。
-3. 粘贴本仓库的 Git URL：`https://github.com/kooktaeru-oss/ST-Preset-Workshop.git`。
+3. 粘贴本仓库的 Git URL：`https://github.com/kooktaeru-oss/ST-Preset-Workshop-Gecko.git`。
 4. 安装完成后刷新 SillyTavern。
 
 ## 当前版本
 
-- 扩展版本：`2.68.0`
+- 扩展版本：`2.68.1`
 - 迁移基准：`🧩预设工坊｜双端适配v2.53`
 - 第一阶段保持原脚本行为，不在迁移过程中重写业务逻辑。
 

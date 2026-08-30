@@ -1,12 +1,12 @@
 {
-  "display_name": "🧩预设工坊",
+  "display_name": "🧩预设工坊（Gecko兼容测试版）",
   "loading_order": 110,
   "requires": [],
   "optional": [],
   "js": "dist/index.js",
   "author": "kookt",
-  "version": "2.68.0",
-  "homePage": "https://github.com/kooktaeru-oss/ST-Preset-Workshop",
+  "version": "2.68.1",
+  "homePage": "https://github.com/kooktaeru-oss/ST-Preset-Workshop-Gecko",
   "auto_update": true,
   "minimum_client_version": "1.12.13"
 }

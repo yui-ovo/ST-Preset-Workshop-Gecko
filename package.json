@@ -1,6 +1,6 @@
 {
-  "name": "st-preset-workshop",
-  "version": "2.68.0",
+  "name": "st-preset-workshop-gecko",
+  "version": "2.68.1",
   "private": true,
   "type": "module",
   "scripts": {

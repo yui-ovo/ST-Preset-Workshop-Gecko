@@ -28,7 +28,7 @@ if (workshop.length < 1_000_000 || !workshop.includes('V2.68 已加载')) {
   throw new Error(`v2.68 业务入口不完整：${workshop.length} 字符`);
 }
 
-if (!entry.includes('workshop-v2.68.js') || !entry.includes("const EXTENSION_VERSION = '2.68.0'")) {
+if (!entry.includes('workshop-v2.68.js') || !entry.includes("const EXTENSION_VERSION = '2.68.1'")) {
   throw new Error('扩展启动器没有指向 v2.68');
 }
 

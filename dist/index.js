@@ -1,6 +1,6 @@
-const EXTENSION_NAME = '🧩预设工坊';
-const EXTENSION_VERSION = '2.68.0';
-const RUNTIME_ID = 'TH-script--🧩预设工坊（GitHub 扩展）--2f53f6af-3c9e-4c71-bc52-9f635be25300';
+const EXTENSION_NAME = '🧩预设工坊（Gecko兼容测试版）';
+const EXTENSION_VERSION = '2.68.1';
+const RUNTIME_ID = 'TH-script--🧩预设工坊（Gecko 兼容扩展）--45dd76e4-8cce-41df-921f-9ebc856a9f25';
 const LEGACY_IFRAME_PREFIX = 'TH-script--🧩预设工坊';
 const HELPER_WAIT_TIMEOUT = 60_000;
 const LEGACY_GRACE_PERIOD = 3_000;
