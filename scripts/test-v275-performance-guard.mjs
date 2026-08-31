@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v2.75.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v2.76.js', import.meta.url), 'utf8');
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
 const marker = '/* ===== PMM_MOBILE_PERFORMANCE_GUARD_V275';
 const nextMarker = '/* ===== PMM_VARIABLE_MACRO_ASSISTANT_V263';
