@@ -6,7 +6,7 @@
   "js": "dist/index.js",
   "author": "kookt",
   "version": "2.77.1",
-  "homePage": "https://github.com/kooktaeru-oss/ST-Preset-Workshop-Gecko",
+  "homePage": "https://github.com/yui-ovo/ST-Preset-Workshop-Gecko",
   "auto_update": true,
   "minimum_client_version": "1.12.13"
 }

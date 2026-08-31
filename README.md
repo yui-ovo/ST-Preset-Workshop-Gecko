@@ -16,7 +16,7 @@
 
 1. 打开 SillyTavern 的“扩展”。
 2. 选择“安装扩展”。
-3. 粘贴本仓库的 Git URL：`https://github.com/kooktaeru-oss/ST-Preset-Workshop-Gecko.git`。
+3. 粘贴本仓库的 Git URL：`https://github.com/yui-ovo/ST-Preset-Workshop-Gecko.git`。
 4. 安装完成后刷新 SillyTavern。
 
 ## 当前版本
