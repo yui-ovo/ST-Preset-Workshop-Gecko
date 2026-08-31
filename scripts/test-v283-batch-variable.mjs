@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v2.83.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v2.84.js', import.meta.url), 'utf8');
 
 const bridgeStart = source.indexOf('function _pmmBatchVariableState()');
 const bridgeEnd = source.indexOf('return n({openFullEditor:', bridgeStart);
@@ -28,7 +28,7 @@ assert.ok(setStart >= 0 && getStart > setStart && badgeStart > getStart, '无法
 const setHandler = source.slice(setStart, getStart);
 const getHandler = source.slice(getStart, badgeStart);
 
-assert.ok(setHandler.includes('const selectedBatch = selectedBatchContext(ctx.panel)'), 'Gecko S 没有读取多选状态');
+assert.ok(setHandler.includes('const selectedBatch = selectedBatchContext(ctx.editor, ctx.panel)'), 'Gecko S 没有读取多选状态');
 assert.ok(setHandler.includes('selectedBatch?.state?.active && selectedBatch.state.count > 0'), 'Gecko S 没有限定多选且已勾选时才批量处理');
 assert.ok(setHandler.indexOf('selectedBatchContext') < setHandler.indexOf('const existing = extractSetVariables'), 'Gecko 批量分支必须先于原单条 S 菜单');
 assert.ok(setHandler.includes('条目名称、开关与排序不变'), 'Gecko 批量弹窗缺少字段保持说明');
