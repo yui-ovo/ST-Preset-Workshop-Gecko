@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v2.81.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v2.82.js', import.meta.url), 'utf8');
 const helperStart = source.indexOf('function xn(e,n)');
 const helperEnd = source.indexOf('const fn=', helperStart);
 
@@ -59,7 +59,7 @@ assert.ok(source.includes("getPropertyValue('--SmartThemeBlurTintColor')"), '应
 assert.ok(source.includes("getPropertyValue('--SmartThemeBodyColor')"), '应读取酒馆主题正文色');
 assert.ok(source.includes('_pmmThemeSurfaceOr(e,_pmmThemeCardFromPanel(A,.92),.92)'), '透明条目应回退到同色系卡片');
 assert.ok(source.includes('_pmmReadableThemeTextForSurfaces([A,a],o,4.5)'), '正文颜色应同时校验面板和卡片');
-assert.ok(source.includes('V2.78 Gecko 主题修复已加载'), '缺少 v2.78 Gecko 加载标记');
+assert.ok(source.includes('V2.82 Gecko 干净重建已加载'), '当前 Gecko 运行版没有保留 v2.78 干净基线');
 assert.ok(source.includes('V2.77 Gecko 快速响应已加载'), 'Gecko 快速入口补丁必须保留');
 
 console.log('v2.78 Gecko 透明主题测试通过：透明层保持原色系，深色文字自动校准，快速入口补丁仍在。');
