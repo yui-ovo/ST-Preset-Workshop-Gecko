@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v2.80.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v2.81.js', import.meta.url), 'utf8');
 const helperStart = source.indexOf('function _pmmTogglePromptEnabledImmutable');
 const helperEnd = source.indexOf('function _pmmRecordCrossDrop', helperStart);
 
