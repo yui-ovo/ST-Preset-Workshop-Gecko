@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v2.79.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v2.80.js', import.meta.url), 'utf8');
 const helperStart = source.indexOf('function _pmmTogglePromptEnabledImmutable');
 const helperEnd = source.indexOf('function _pmmRecordCrossDrop', helperStart);
 
@@ -35,8 +35,8 @@ assert.equal(missing.changed, false, '不存在的条目不应误报更新');
 assert.equal(missing.items, original, '不存在的条目不应替换数组');
 
 assert.ok(
-  source.includes('toggleEnabled:function(e){const n=_pmmTogglePromptEnabledImmutable(a.value,e);return n.changed&&(a.value=n.items),n.changed}'),
-  'Gecko 合并面板 store 必须把新数组写回 rightPrompts',
+  source.includes('toggleEnabled:async function(e){const n=await _pmmToggleMergePromptEnabled(a.value,e,ze(),A.value);return n.changed&&(a.value=n.items),n.changed}'),
+  'Gecko 合并面板 store 必须通过同步函数把新数组写回 rightPrompts',
 );
 assert.ok(source.includes('V2.79 Gecko 开关修复已加载'), '缺少 v2.79 Gecko 加载标记');
 assert.ok(source.includes('V2.78 Gecko 主题修复已加载'), 'Gecko 透明主题修复不能丢失');
