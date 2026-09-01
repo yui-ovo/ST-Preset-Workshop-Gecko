@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v2.89.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v2.90.js', import.meta.url), 'utf8');
 const helperStart = source.indexOf('function xn(e,n)');
 const helperEnd = source.indexOf('const fn=', helperStart);
 

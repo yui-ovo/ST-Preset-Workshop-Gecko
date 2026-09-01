@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v2.89.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v2.90.js', import.meta.url), 'utf8');
 
 assert.ok(!source.includes('function _pmmTogglePromptEnabledImmutable'), 'Gecko 当前运行版不应包含 v2.79 尝试性辅助函数');
 assert.ok(!source.includes('function _pmmToggleMergePromptEnabled'), 'Gecko 当前运行版不应包含 v2.80 跨作用域辅助函数');
