@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-const source = await readFile(new URL('../dist/workshop-v2.90.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v2.91.js', import.meta.url), 'utf8');
 
 assert.ok(source.includes('PMM_GECKO_FAST_RESPONSE_V277'), 'Gecko 快速响应适配被正常版覆盖');
 assert.ok(!source.includes('PMM_TAURITAVERN_ADAPTER_V290'), 'Gecko 运行文件不应混入 TauriTavern 专用适配');

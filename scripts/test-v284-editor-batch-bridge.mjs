@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v2.90.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v2.91.js', import.meta.url), 'utf8');
 const start = source.indexOf('function selectedBatchContext(editor, panel)');
 const end = source.indexOf('function applyTheme(dialog, panel)', start);
 assert.ok(start >= 0 && end > start, '无法定位 Gecko 展开编辑器多选桥');
