@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v2.92.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v2.93.js', import.meta.url), 'utf8');
 
 assert.ok(source.includes('async function _pmmRevealPromptForCompare(e)'), 'PresetPanel 缺少按名称揭示对比条目的方法');
 assert.ok(

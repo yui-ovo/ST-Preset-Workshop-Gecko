@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-const source = await readFile(new URL('../dist/workshop-v2.92.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v2.93.js', import.meta.url), 'utf8');
 
 assert.ok(source.includes('PMM_GECKO_FAST_RESPONSE_V277'), 'Gecko 快速响应适配被正常版覆盖');
 assert.ok(!source.includes('PMM_TAURITAVERN_ADAPTER_V290'), 'Gecko 运行文件不应混入 TauriTavern 专用适配');
@@ -11,8 +11,8 @@ const floatingStart = source.indexOf('PMM_FLOATING_PANEL_BATCH_V1');
 assert.ok(floatingStart >= 0, '缺少手机悬浮入口模块');
 const floatingNextModule = source.indexOf('/* =====', floatingStart + 30);
 const floatingPatch = source.slice(floatingStart, floatingNextModule > floatingStart ? floatingNextModule : undefined);
-assert.ok(!floatingPatch.includes('pmmFloatingNativeMouseBound'), 'Gecko 手机入口仍在登记会吞 click 的 mousedown 拦截');
-assert.ok(!floatingPatch.includes("edge.addEventListener('mousedown'"), 'Gecko 手机入口仍会用 mousedown 阻止原组件事件');
+assert.ok(floatingPatch.includes('pmmFloatingNativeMouseBound'), 'Gecko 手机入口没有恢复单状态标记');
+assert.ok(floatingPatch.includes("edge.addEventListener('mousedown'"), 'Gecko 手机入口没有恢复 mousedown 二次切换拦截');
 assert.ok(floatingPatch.includes("edge.addEventListener('click'"), 'Gecko 手机入口原有 click 打开链路被误删');
 
 assert.ok(
@@ -88,4 +88,4 @@ assert.deepEqual(
   '一次 Gecko 分组改名只能建立一条撤销记录',
 );
 
-console.log('v2.90 Gecko 回归通过：保留原生 click 入口、Gecko 专用适配与三类编辑撤销。');
+console.log('v2.90 Gecko 回归通过：保留单状态入口、原生 click、Gecko 专用适配与三类编辑撤销。');
