@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
-const workshop = await readFile(new URL('../dist/workshop-v2.95.js', import.meta.url), 'utf8');
+const workshop = await readFile(new URL('../dist/workshop-v2.96.js', import.meta.url), 'utf8');
 const scheduler = await readFile(new URL('../bridge/gecko-frame-scheduler.js', import.meta.url), 'utf8');
 
-assert.ok(entry.includes("const EXTENSION_VERSION = '2.95.0'"), 'Gecko 扩展版本号不是 2.95.0');
-assert.ok(entry.includes("new URL('./workshop-v2.95.js', import.meta.url)"), '启动器没有指向 v2.95 业务入口');
+assert.ok(entry.includes("const EXTENSION_VERSION = '2.96.0'"), 'Gecko 扩展版本号不是 2.96.0');
+assert.ok(entry.includes("new URL('./workshop-v2.96.js', import.meta.url)"), '启动器没有指向 v2.96 业务入口');
 assert.ok(entry.indexOf('<script src="${schedulerUrl}"></script>') < entry.indexOf('vue.runtime.global.prod.min.js'), '顶层帧调度桥没有在 Vue 前加载');
 assert.ok(scheduler.includes('globalThis.requestAnimationFrame = callback => hostRequestAnimationFrame'), '后台 iframe 的 rAF 没有委托给顶层窗口');
 
@@ -39,5 +39,6 @@ for (const snippet of [
 ]) {
   assert.ok(workshop.includes(snippet), `条目即时绘制补丁缺少关键行为：${snippet}`);
 }
+assert.ok(workshop.includes("if(event.pointerType==='touch')return;"), '触摸滚动起点仍会立即触发强制绘制');
 
 console.log('v2.77 Gecko 快速响应测试通过：入口不再串行长等，展开条目由顶层窗口即时唤醒。');
