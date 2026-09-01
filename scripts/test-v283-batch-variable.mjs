@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v2.86.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v2.87.js', import.meta.url), 'utf8');
 
 const bridgeStart = source.indexOf('function _pmmBatchVariableState()');
 const bridgeEnd = source.indexOf('return n({openFullEditor:', bridgeStart);
