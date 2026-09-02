@@ -1,13 +1,22 @@
 const EXTENSION_NAME = '🧩预设工坊（Gecko兼容测试版）';
-const EXTENSION_VERSION = '3.0.2';
+const EXTENSION_VERSION = '3.0.3';
 const RUNTIME_ID = 'TH-script--🧩预设工坊（Gecko 兼容扩展）--45dd76e4-8cce-41df-921f-9ebc856a9f25';
 const LEGACY_IFRAME_PREFIX = 'TH-script--🧩预设工坊';
+const EXTENSION_FOLDER_NAME = 'ST-Preset-Workshop-Gecko';
 const HELPER_WAIT_TIMEOUT = 60_000;
 const LEGACY_GRACE_PERIOD = 3_000;
 const VERSION_CHECK_INTERVAL = 30_000;
+const RAPID_VERSION_CHECK_INTERVAL = 750;
+const RAPID_VERSION_CHECK_TIMEOUT = 65_000;
+const NATIVE_UPDATE_RELOAD_DELAY = 1_000;
 
 let versionCheckTimer = null;
 let versionCheckBusy = false;
+let rapidVersionCheckTimer = null;
+let rapidVersionCheckStopTimer = null;
+let nativeUpdateReloadTimer = null;
+let singleExtensionUpdatePending = false;
+let bulkExtensionUpdateInProgress = false;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -30,7 +39,7 @@ async function readInstalledVersion() {
 }
 
 async function checkForInstalledUpdate() {
-  if (versionCheckBusy || document.visibilityState === 'hidden') return;
+  if (versionCheckBusy || bulkExtensionUpdateInProgress || document.visibilityState === 'hidden') return;
   versionCheckBusy = true;
   try {
     const nextVersion = await readInstalledVersion();
@@ -41,9 +50,15 @@ async function checkForInstalledUpdate() {
     if (document.visibilityState === 'hidden') return;
     if (await readInstalledVersion() !== nextVersion) return;
 
+    const followsNativeSingleUpdate = singleExtensionUpdatePending;
     stopVersionWatcher();
-    notify('info', `扩展已更新至 v${nextVersion}，正在自动刷新酒馆`);
-    await sleep(450);
+    if (followsNativeSingleUpdate) {
+      /* 单独更新时酒馆会自己弹成功提示，留一秒给原生提示显示，不再重复弹第二条。 */
+      await sleep(NATIVE_UPDATE_RELOAD_DELAY);
+    } else {
+      notify('info', `扩展已更新至 v${nextVersion}，正在自动刷新酒馆`);
+      await sleep(450);
+    }
     globalThis.__PMM_PERFORMANCE_GUARD_V275__?.markReloadReason?.('extension-update');
     globalThis.location.reload();
   } catch (error) {
@@ -57,15 +72,107 @@ function handleVisibilityChange() {
   if (document.visibilityState === 'visible') void checkForInstalledUpdate();
 }
 
+function extensionBlockName(block) {
+  return String(block?.dataset?.name || '').replace(/^\/+/, '').trim();
+}
+
+function isOwnExtensionBlock(block) {
+  return extensionBlockName(block).endsWith(EXTENSION_FOLDER_NAME);
+}
+
+function isOwnSingleUpdateSpinning() {
+  return [...document.querySelectorAll('.extension_block')].some(block => (
+    isOwnExtensionBlock(block)
+    && Boolean(block.querySelector('.btn_update .fa-spin, .btn_update.fa-spin'))
+  ));
+}
+
+function stopRapidVersionCheck(resetPending = true) {
+  if (rapidVersionCheckTimer !== null) {
+    globalThis.clearInterval(rapidVersionCheckTimer);
+    rapidVersionCheckTimer = null;
+  }
+  if (rapidVersionCheckStopTimer !== null) {
+    globalThis.clearTimeout(rapidVersionCheckStopTimer);
+    rapidVersionCheckStopTimer = null;
+  }
+  if (resetPending) singleExtensionUpdatePending = false;
+}
+
+function startRapidVersionCheck() {
+  stopRapidVersionCheck(false);
+  singleExtensionUpdatePending = true;
+  void checkForInstalledUpdate();
+  rapidVersionCheckTimer = globalThis.setInterval(
+    () => void checkForInstalledUpdate(),
+    RAPID_VERSION_CHECK_INTERVAL,
+  );
+  rapidVersionCheckStopTimer = globalThis.setTimeout(
+    () => stopRapidVersionCheck(),
+    RAPID_VERSION_CHECK_TIMEOUT,
+  );
+}
+
+function markExtensionUpdateReload() {
+  globalThis.__PMM_PERFORMANCE_GUARD_V275__?.markReloadReason?.('extension-update');
+  globalThis.location.reload();
+}
+
+function scheduleNativeSingleUpdateReload() {
+  if (bulkExtensionUpdateInProgress || nativeUpdateReloadTimer !== null) return false;
+  if (!singleExtensionUpdatePending && !isOwnSingleUpdateSpinning()) return false;
+
+  stopVersionWatcher();
+  nativeUpdateReloadTimer = globalThis.setTimeout(
+    markExtensionUpdateReload,
+    NATIVE_UPDATE_RELOAD_DELAY,
+  );
+  return true;
+}
+
+function handleNativeExtensionManagerClick(event) {
+  const target = event?.target;
+  if (!target || typeof target.closest !== 'function') return;
+
+  const toolbar = target.closest('.extensions_toolbar');
+  const toolbarButton = target.closest('button');
+  if (toolbar && toolbarButton) {
+    const updateButtons = [...toolbar.querySelectorAll('button')].slice(0, 2);
+    if (updateButtons.includes(toolbarButton)) {
+      bulkExtensionUpdateInProgress = true;
+      stopRapidVersionCheck();
+      return;
+    }
+  }
+
+  const updateButton = target.closest('.btn_update');
+  const extensionBlock = updateButton?.closest('.extension_block');
+  if (updateButton && isOwnExtensionBlock(extensionBlock)) {
+    bulkExtensionUpdateInProgress = false;
+    startRapidVersionCheck();
+  }
+}
+
+/**
+ * SillyTavern 官方扩展更新钩子：仅在单独点击本扩展更新按钮时安排刷新。
+ * 批量更新继续交给酒馆完成全部任务后统一刷新。
+ */
+export function onUpdate() {
+  scheduleNativeSingleUpdateReload();
+}
+
 function startVersionWatcher() {
   if (versionCheckTimer !== null) return;
   void checkForInstalledUpdate();
   versionCheckTimer = globalThis.setInterval(() => void checkForInstalledUpdate(), VERSION_CHECK_INTERVAL);
   document.addEventListener('visibilitychange', handleVisibilityChange);
+  document.addEventListener('click', handleNativeExtensionManagerClick, true);
 }
 
 function stopVersionWatcher() {
   document.removeEventListener('visibilitychange', handleVisibilityChange);
+  document.removeEventListener('click', handleNativeExtensionManagerClick, true);
+  stopRapidVersionCheck();
   if (versionCheckTimer !== null) {
     globalThis.clearInterval(versionCheckTimer);
     versionCheckTimer = null;
@@ -105,7 +212,8 @@ function buildRuntimeDocument() {
   const schedulerUrl = new URL('../bridge/gecko-frame-scheduler.js', import.meta.url).href;
   const parentJqueryUrl = new URL('../bridge/parent-jquery.js', import.meta.url).href;
   const predefineUrl = new URL('../bridge/predefine.js', import.meta.url).href;
-  const workshopUrl = new URL('./workshop-v3.02.js', import.meta.url).href;
+  const workshopUrl = new URL('./workshop-v3.03.js', import.meta.url).href;
+  const presetContentEditorUrl = new URL('./preset-content-editor.js', import.meta.url).href;
 
   return `<!DOCTYPE html>
 <html>
@@ -120,6 +228,7 @@ function buildRuntimeDocument() {
 </head>
 <body>
 <script type="module" src="${workshopUrl}"></script>
+<script type="module" src="${presetContentEditorUrl}"></script>
 </body>
 </html>`;
 }
@@ -179,7 +288,7 @@ export async function startPresetWorkshop() {
   document.body.appendChild(iframe);
 
   iframe.addEventListener('load', () => {
-    console.info(`[${EXTENSION_NAME}] GitHub 扩展运行环境已启动（v3.02 Gecko）`);
+    console.info(`[${EXTENSION_NAME}] GitHub 扩展运行环境已启动（v3.03 Gecko）`);
   }, { once: true });
 
   return iframe;
@@ -187,6 +296,11 @@ export async function startPresetWorkshop() {
 
 export function stopPresetWorkshop() {
   stopVersionWatcher();
+  if (nativeUpdateReloadTimer !== null) {
+    globalThis.clearTimeout(nativeUpdateReloadTimer);
+    nativeUpdateReloadTimer = null;
+  }
+  try { globalThis.__PMM_PRESET_CONTENT_EDITOR_V1__?.cleanup?.(); } catch (_) {}
   document.getElementById(RUNTIME_ID)?.remove();
 }
 

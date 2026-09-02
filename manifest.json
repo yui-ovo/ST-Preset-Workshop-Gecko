@@ -5,8 +5,11 @@
   "optional": [],
   "js": "dist/index.js",
   "author": "kookt",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "homePage": "https://github.com/yui-ovo/ST-Preset-Workshop-Gecko",
   "auto_update": true,
+  "hooks": {
+    "update": "onUpdate"
+  },
   "minimum_client_version": "1.12.13"
 }
