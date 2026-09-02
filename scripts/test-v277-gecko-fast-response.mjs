@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
-const workshop = await readFile(new URL('../dist/workshop-v2.98.js', import.meta.url), 'utf8');
+const workshop = await readFile(new URL('../dist/workshop-v2.99.js', import.meta.url), 'utf8');
 const scheduler = await readFile(new URL('../bridge/gecko-frame-scheduler.js', import.meta.url), 'utf8');
 
-assert.ok(entry.includes("const EXTENSION_VERSION = '2.98.0'"), 'Gecko 扩展版本号不是 2.98.0');
-assert.ok(entry.includes("new URL('./workshop-v2.98.js', import.meta.url)"), '启动器没有指向 v2.98 业务入口');
+assert.ok(entry.includes("const EXTENSION_VERSION = '2.99.0'"), 'Gecko 扩展版本号不是 2.99.0');
+assert.ok(entry.includes("new URL('./workshop-v2.99.js', import.meta.url)"), '启动器没有指向 v2.99 业务入口');
 assert.ok(entry.indexOf('<script src="${schedulerUrl}"></script>') < entry.indexOf('vue.runtime.global.prod.min.js'), '顶层帧调度桥没有在 Vue 前加载');
 assert.ok(scheduler.includes('globalThis.requestAnimationFrame = callback => hostRequestAnimationFrame'), '后台 iframe 的 rAF 没有委托给顶层窗口');
 
