@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 
 const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
-const workshop = await readFile(new URL('../dist/workshop-v3.01.js', import.meta.url), 'utf8');
+const workshop = await readFile(new URL('../dist/workshop-v3.02.js', import.meta.url), 'utf8');
 const migrationBase = await readFile(new URL('../dist/workshop-v2.53.js', import.meta.url), 'utf8');
 const bridge = await readFile(new URL('../bridge/predefine.js', import.meta.url), 'utf8');
 const scheduler = await readFile(new URL('../bridge/gecko-frame-scheduler.js', import.meta.url), 'utf8');
@@ -25,25 +25,25 @@ if (!entry.includes('startPresetWorkshop') || !entry.includes('waitForTavernHelp
   throw new Error('扩展启动器不完整');
 }
 
-if (workshop.length < 1_000_000 || !workshop.includes('V3.01 Gecko 已加载')) {
-  throw new Error(`v3.01 Gecko 业务入口不完整：${workshop.length} 字符`);
+if (workshop.length < 1_000_000 || !workshop.includes('V3.02 Gecko 已加载')) {
+  throw new Error(`v3.02 Gecko 业务入口不完整：${workshop.length} 字符`);
 }
 
-if (!entry.includes('workshop-v3.01.js') || !entry.includes("const EXTENSION_VERSION = '3.0.1'")) {
-  throw new Error('扩展启动器没有指向 v3.01 Gecko');
+if (!entry.includes('workshop-v3.02.js') || !entry.includes("const EXTENSION_VERSION = '3.0.2'")) {
+  throw new Error('扩展启动器没有指向 v3.02 Gecko');
 }
 
 if (!workshop.includes('readPresetExtensionField?.({name:requested,path:PATH})')) {
-  throw new Error('v3.01 Gecko 没有按指定预设读取柏宝箱分组');
+  throw new Error('v3.02 Gecko 没有按指定预设读取柏宝箱分组');
 }
 
 if (!workshop.includes('writePresetExtensionField({name:presetName,path:PATH')) {
-  throw new Error('v3.01 Gecko 没有按指定预设写入柏宝箱分组');
+  throw new Error('v3.02 Gecko 没有按指定预设写入柏宝箱分组');
 }
 
 if (!workshop.includes("String(n).startsWith('branch:')") ||
     !workshop.includes('分支直接使用已保存的柏宝箱分组快照')) {
-  throw new Error('v3.01 Gecko 缺少分支快照读取隔离修复');
+  throw new Error('v3.02 Gecko 缺少分支快照读取隔离修复');
 }
 
 if (legacy.content !== migrationBase) {
@@ -60,7 +60,7 @@ if (!bridge.includes('TavernHelper') || !bridge.includes('_bind')) {
 }
 
 if (!scheduler.includes('__PMM_GECKO_FRAME_SCHEDULER_V277__') || !entry.includes('gecko-frame-scheduler.js')) {
-  throw new Error('v3.01 Gecko 顶层帧调度桥不完整');
+  throw new Error('v3.02 Gecko 顶层帧调度桥不完整');
 }
 
 console.log(`扩展检查通过：${manifest.display_name} v${manifest.version}，业务入口 ${workshop.length} 字符。`);
