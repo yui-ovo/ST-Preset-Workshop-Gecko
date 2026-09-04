@@ -3,10 +3,19 @@
   'use strict';
 
   const SELF = window;
-  const TOP = (() => { try { return window.top || window; } catch (_) { return window; } })();
+  const PARENT = (() => { try { return window.parent || window; } catch (_) { return window; } })();
+  const TOP = (() => { try { return window.top || PARENT; } catch (_) { return PARENT; } })();
   const API_KEY = '__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__';
 
-  try { TOP[API_KEY]?.cleanup?.(); } catch (_) {}
+  function ownerWindows() {
+    return [...new Set([SELF, PARENT, TOP])].filter(owner => {
+      try { return Boolean(owner?.document); } catch (_) { return false; }
+    });
+  }
+
+  for (const owner of ownerWindows()) {
+    try { owner[API_KEY]?.cleanup?.(); } catch (_) {}
+  }
 
   function asArray(value) {
     const raw = value?.value ?? value;
@@ -18,9 +27,13 @@
   }
 
   function mainPanel() {
-    const documentObject = TOP.document || document;
-    return documentObject.querySelector('#preset-manager-main-panel .preset-panel')
-      || documentObject.querySelector('#preset-manager-main-panel');
+    for (const owner of ownerWindows()) {
+      const documentObject = owner.document;
+      const panel = documentObject.querySelector('#preset-manager-main-panel .preset-panel')
+        || documentObject.querySelector('#preset-manager-main-panel');
+      if (panel) return panel;
+    }
+    return null;
   }
 
   function findDispatcher() {
@@ -95,9 +108,11 @@
   }
 
   const bridge = { drop, cleanup: () => {
-    try { if (TOP[API_KEY] === bridge) delete TOP[API_KEY]; } catch (_) {}
-    try { if (SELF[API_KEY] === bridge) delete SELF[API_KEY]; } catch (_) {}
+    for (const owner of ownerWindows()) {
+      try { if (owner[API_KEY] === bridge) delete owner[API_KEY]; } catch (_) {}
+    }
   } };
-  TOP[API_KEY] = bridge;
-  SELF[API_KEY] = bridge;
+  for (const owner of ownerWindows()) {
+    try { owner[API_KEY] = bridge; } catch (_) {}
+  }
 })();

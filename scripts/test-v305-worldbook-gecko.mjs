@@ -8,7 +8,7 @@ const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', im
 const toolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const bridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
 
-assert.equal(manifest.version, '3.1.4', 'Gecko 世界书版必须更新 manifest 版本');
+assert.equal(manifest.version, '3.1.5', 'Gecko 世界书版必须更新 manifest 版本');
 for (const marker of [
   "new URL('./worldbook-stitch-gecko.js', import.meta.url)",
   "new URL('./worldbook-preset-drop-bridge-gecko.js', import.meta.url)",
@@ -32,10 +32,7 @@ for (const marker of [
   'data-wb-action="duplicate-entry"',
   'data-wb-action="delete-entry"',
   'function worldToPreset(entry)',
-  'async function fallbackBaiBaiGroupedPresetDrop(target, additions, placement = null)',
-  "targetSectionId.startsWith('baibai_')",
-  'await compat.flushPreset?.(target.name);',
-  'if (await fallbackBaiBaiGroupedPresetDrop(target, additions, placement))',
+  'SELF.top?.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__',
   'async function transferWorldToWorld(fromName, move, forcedKeys = null, placement = null)',
   'const IS_GECKO = /(?:Firefox|Fennec|GeckoView)/i.test',
   'function restoreGeckoThemeToggle(',
@@ -47,10 +44,15 @@ for (const marker of [
 ]) {
   assert.ok(worldbook.includes(marker), `Gecko 世界书功能缺少实现：${marker}`);
 }
+assert.ok(!worldbook.includes('fallbackBaiBaiGroupedPresetDrop'), 'Gecko 的柏宝箱分组桥失败时不得直接写入局部预设数据');
+assert.ok(worldbook.includes("notify('error', '目标分组已识别，但未取得工坊拖入处理器；已取消拖入以避免条目掉到组外');"), 'Gecko 分组桥不可用时必须安全取消');
 
 for (const marker of [
   "const API_KEY = '__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__'",
   'function findDispatcher()',
+  'const PARENT = (() => { try { return window.parent || window; } catch (_) { return window; } })();',
+  'function ownerWindows()',
+  'for (const owner of ownerWindows())',
   'source.onCrossPanelDrop',
   "reason: 'target-not-resolved'",
   'await dispatcher.drop(...args);',
