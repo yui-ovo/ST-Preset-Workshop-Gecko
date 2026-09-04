@@ -8,7 +8,7 @@ const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', im
 const toolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const bridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
 
-assert.equal(manifest.version, '3.1.3', 'Gecko 世界书版必须更新 manifest 版本');
+assert.equal(manifest.version, '3.1.4', 'Gecko 世界书版必须更新 manifest 版本');
 for (const marker of [
   "new URL('./worldbook-stitch-gecko.js', import.meta.url)",
   "new URL('./worldbook-preset-drop-bridge-gecko.js', import.meta.url)",
@@ -32,6 +32,10 @@ for (const marker of [
   'data-wb-action="duplicate-entry"',
   'data-wb-action="delete-entry"',
   'function worldToPreset(entry)',
+  'async function fallbackBaiBaiGroupedPresetDrop(target, additions, placement = null)',
+  "targetSectionId.startsWith('baibai_')",
+  'await compat.flushPreset?.(target.name);',
+  'if (await fallbackBaiBaiGroupedPresetDrop(target, additions, placement))',
   'async function transferWorldToWorld(fromName, move, forcedKeys = null, placement = null)',
   'const IS_GECKO = /(?:Firefox|Fennec|GeckoView)/i.test',
   'function restoreGeckoThemeToggle(',
