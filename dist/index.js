@@ -1,5 +1,5 @@
 const EXTENSION_NAME = '🧩预设工坊（Gecko兼容测试版）';
-const EXTENSION_VERSION = '3.0.4';
+const EXTENSION_VERSION = '3.1.0';
 const RUNTIME_ID = 'TH-script--🧩预设工坊（Gecko 兼容扩展）--45dd76e4-8cce-41df-921f-9ebc856a9f25';
 const LEGACY_IFRAME_PREFIX = 'TH-script--🧩预设工坊';
 const EXTENSION_FOLDER_NAME = 'ST-Preset-Workshop-Gecko';
@@ -212,8 +212,12 @@ function buildRuntimeDocument() {
   const schedulerUrl = new URL('../bridge/gecko-frame-scheduler.js', import.meta.url).href;
   const parentJqueryUrl = new URL('../bridge/parent-jquery.js', import.meta.url).href;
   const predefineUrl = new URL('../bridge/predefine.js', import.meta.url).href;
-  const workshopUrl = new URL('./workshop-v3.04.js', import.meta.url).href;
+  const workshopUrl = new URL('./workshop-v3.05.js', import.meta.url).href;
   const presetContentEditorUrl = new URL('./preset-content-editor.js', import.meta.url).href;
+  const worldbookStitchUrl = new URL('./worldbook-stitch-gecko.js', import.meta.url).href;
+  const worldbookBridgeUrl = new URL('./worldbook-preset-drop-bridge-gecko.js', import.meta.url).href;
+  const worldbookToolbarUrl = new URL('./worldbook-toolbar-entry-gecko.js', import.meta.url).href;
+  const worldbookLoaderKey = '__PMM_LOAD_WORLDBOOK_STITCH__';
 
   return `<!DOCTYPE html>
 <html>
@@ -227,8 +231,44 @@ function buildRuntimeDocument() {
 <script src="https://testingcf.jsdelivr.net/gh/N0VI028/JS-Slash-Runner/src/iframe/node_modules/log.js"></script>
 </head>
 <body>
+<script>
+(() => {
+  const source = ${JSON.stringify(worldbookStitchUrl)};
+  const loaderKey = ${JSON.stringify(worldbookLoaderKey)};
+  const apiKey = '__PMM_WORLDBOOK_STITCH_TEST3__';
+  let loading = null;
+
+  const currentApi = () => {
+    try { return window.parent?.[apiKey] || null; } catch (_) { return null; }
+  };
+
+  window[loaderKey] = () => {
+    const ready = currentApi();
+    if (typeof ready?.open === 'function') return Promise.resolve(ready);
+    if (loading) return loading;
+    loading = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.type = 'module';
+      script.src = source;
+      script.addEventListener('load', () => {
+        const api = currentApi();
+        if (typeof api?.open === 'function') resolve(api);
+        else reject(new Error('世界书模块没有提供打开接口'));
+      }, { once: true });
+      script.addEventListener('error', () => reject(new Error('世界书模块载入失败')), { once: true });
+      document.head.append(script);
+    }).catch(error => {
+      loading = null;
+      throw error;
+    });
+    return loading;
+  };
+})();
+</script>
+<script src="${worldbookBridgeUrl}"></script>
 <script type="module" src="${workshopUrl}"></script>
 <script type="module" src="${presetContentEditorUrl}"></script>
+<script src="${worldbookToolbarUrl}"></script>
 </body>
 </html>`;
 }
@@ -288,7 +328,7 @@ export async function startPresetWorkshop() {
   document.body.appendChild(iframe);
 
   iframe.addEventListener('load', () => {
-    console.info(`[${EXTENSION_NAME}] GitHub 扩展运行环境已启动（v3.04 Gecko）`);
+    console.info(`[${EXTENSION_NAME}] GitHub 扩展运行环境已启动（v3.05 Gecko）`);
   }, { once: true });
 
   return iframe;

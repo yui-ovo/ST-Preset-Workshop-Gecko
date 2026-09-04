@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v3.04.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v3.05.js', import.meta.url), 'utf8');
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
 
-assert.ok(entry.includes("const EXTENSION_VERSION = '3.0.4'"), 'Gecko 扩展版本号不是 3.0.4');
-assert.ok(entry.includes("new URL('./workshop-v3.04.js', import.meta.url)"), '启动器没有指向 v3.04 业务入口');
+assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.0'"), 'Gecko 扩展版本号不是 3.1.0');
+assert.ok(entry.includes("new URL('./workshop-v3.05.js', import.meta.url)"), '启动器没有指向 v3.05 业务入口');
 
 for (const marker of [
   '_pmmSourceSection=t.sections.find(e=>m.every(n=>e.itemIds.includes(n)))',
@@ -38,4 +38,4 @@ const addedCode = source.slice(source.indexOf('/* ===== PMM_GROUP_SELECT_NESTING
 assert.ok(addedCode.length > 0, '无法定位本次新增代码');
 assert.ok(!/worldbook|data-wb|pmm-wb/iu.test(addedCode), '本次移植不应包含世界书功能或标记');
 
-console.log('v3.04 回归通过：已移植分组内全选、原位子分组和 Tauri iOS 防溢出，且未加入世界书功能。');
+console.log('v3.05 回归通过：已保留分组内全选、原位子分组和 Tauri iOS 防溢出，并加入独立世界书模块。');

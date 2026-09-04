@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v3.04.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v3.05.js', import.meta.url), 'utf8');
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
 
-assert.ok(entry.includes("const EXTENSION_VERSION = '3.0.4'"), 'Gecko 扩展版本号不是 3.0.4');
-assert.ok(entry.includes("new URL('./workshop-v3.04.js', import.meta.url)"), '启动器没有指向 v3.04 业务入口');
+assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.0'"), 'Gecko 扩展版本号不是 3.1.0');
+assert.ok(entry.includes("new URL('./workshop-v3.05.js', import.meta.url)"), '启动器没有指向 v3.05 业务入口');
 
 const handle = source.match(/#preset-manager-main-panel \.pmm-split-handle--top\{([\s\S]*?)\n  \}/)?.[1] || '';
 assert.ok(handle.includes('width:100%!important'), '底边触摸层没有保持整宽');
