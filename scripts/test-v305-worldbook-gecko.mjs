@@ -9,7 +9,7 @@ const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', im
 const toolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const bridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
 
-assert.equal(manifest.version, '3.1.7', 'Gecko 世界书版必须更新 manifest 版本');
+assert.equal(manifest.version, '3.1.8', 'Gecko 世界书版必须更新 manifest 版本');
 for (const marker of [
   "const appendRuntimeVersion = url =>",
   "url.searchParams.set('v', EXTENSION_VERSION)",
@@ -43,6 +43,12 @@ for (const marker of [
   'function onGeckoWorldTouchStart(event)',
   'function onGeckoWorldTouchMove(event)',
   'function onGeckoWorldTouchEnd(event)',
+  'function endNativePresetDragState()',
+  "new TOP.DragEvent('dragend', { bubbles:true, cancelable:false })",
+  'card.dispatchEvent(event);',
+  'function scheduleDropIndicatorCleanup()',
+  'for (const delay of [0, 80, 240])',
+  '.finally(scheduleDropIndicatorCleanup)',
   "DOC.addEventListener('touchmove', onGeckoWorldTouchMove, { capture:true, passive:false });",
 ]) {
   assert.ok(worldbook.includes(marker), `Gecko 世界书功能缺少实现：${marker}`);
