@@ -1,5 +1,5 @@
 const EXTENSION_NAME = '🧩预设工坊（Gecko兼容测试版）';
-const EXTENSION_VERSION = '3.1.6';
+const EXTENSION_VERSION = '3.1.7';
 const RUNTIME_ID = 'TH-script--🧩预设工坊（Gecko 兼容扩展）--45dd76e4-8cce-41df-921f-9ebc856a9f25';
 const LEGACY_IFRAME_PREFIX = 'TH-script--🧩预设工坊';
 const EXTENSION_FOLDER_NAME = 'ST-Preset-Workshop-Gecko';
@@ -209,14 +209,18 @@ async function waitForTavernHelper() {
 }
 
 function buildRuntimeDocument() {
-  const schedulerUrl = new URL('../bridge/gecko-frame-scheduler.js', import.meta.url).href;
-  const parentJqueryUrl = new URL('../bridge/parent-jquery.js', import.meta.url).href;
-  const predefineUrl = new URL('../bridge/predefine.js', import.meta.url).href;
-  const workshopUrl = new URL('./workshop-v3.05.js', import.meta.url).href;
-  const presetContentEditorUrl = new URL('./preset-content-editor.js', import.meta.url).href;
-  const worldbookStitchUrl = new URL('./worldbook-stitch-gecko.js', import.meta.url).href;
-  const worldbookBridgeUrl = new URL('./worldbook-preset-drop-bridge-gecko.js', import.meta.url).href;
-  const worldbookToolbarUrl = new URL('./worldbook-toolbar-entry-gecko.js', import.meta.url).href;
+  const appendRuntimeVersion = url => {
+    url.searchParams.set('v', EXTENSION_VERSION);
+    return url.href;
+  };
+  const schedulerUrl = appendRuntimeVersion(new URL('../bridge/gecko-frame-scheduler.js', import.meta.url));
+  const parentJqueryUrl = appendRuntimeVersion(new URL('../bridge/parent-jquery.js', import.meta.url));
+  const predefineUrl = appendRuntimeVersion(new URL('../bridge/predefine.js', import.meta.url));
+  const workshopUrl = appendRuntimeVersion(new URL('./workshop-v3.05.js', import.meta.url));
+  const presetContentEditorUrl = appendRuntimeVersion(new URL('./preset-content-editor.js', import.meta.url));
+  const worldbookStitchUrl = appendRuntimeVersion(new URL('./worldbook-stitch-gecko.js', import.meta.url));
+  const worldbookBridgeUrl = appendRuntimeVersion(new URL('./worldbook-preset-drop-bridge-gecko.js', import.meta.url));
+  const worldbookToolbarUrl = appendRuntimeVersion(new URL('./worldbook-toolbar-entry-gecko.js', import.meta.url));
   const worldbookLoaderKey = '__PMM_LOAD_WORLDBOOK_STITCH__';
 
   return `<!DOCTYPE html>

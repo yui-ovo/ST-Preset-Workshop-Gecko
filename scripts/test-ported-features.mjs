@@ -84,6 +84,7 @@ for (const marker of [
   'RAPID_VERSION_CHECK_INTERVAL = 750',
   "document.addEventListener('click', handleNativeExtensionManagerClick, true)",
   "new URL('./preset-content-editor.js', import.meta.url)",
+  "url.searchParams.set('v', EXTENSION_VERSION)",
 ]) {
   assert.ok(entry.includes(marker), `更新刷新或预设编辑器入口缺少实现：${marker}`);
 }

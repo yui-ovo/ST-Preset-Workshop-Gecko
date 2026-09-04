@@ -48,11 +48,21 @@
     const existing = vue[VUE_TRACKER_KEY];
     if (existing?.apps instanceof Set) return existing;
 
-    const tracker = { apps: new Set(), originalCreateApp: vue.createApp };
+    const tracker = { apps: new Set(), dispatchers: [], originalCreateApp: vue.createApp };
     try {
       vue.createApp = function trackedCreateApp(...args) {
         const app = tracker.originalCreateApp.apply(this, args);
         tracker.apps.add(app);
+        try {
+          app.mixin({
+            mounted() {
+              const dispatcher = dispatcherFromComponent(this.$);
+              if (!dispatcher) return;
+              tracker.dispatchers = tracker.dispatchers.filter(item => item.component !== dispatcher.component);
+              tracker.dispatchers.push(dispatcher);
+            },
+          });
+        } catch (_) {}
         const originalMount = app.mount;
         if (typeof originalMount === 'function') {
           app.mount = function trackedMount(...mountArgs) {
@@ -81,22 +91,28 @@
     ].flat().filter(handler => typeof handler === 'function');
   }
 
+  function dispatcherFromComponent(component) {
+    if (!component) return null;
+    const handlers = [component.vnode?.props, component.props, component.attrs].flatMap(handlerList);
+    if (!handlers.length) return null;
+    return {
+      component,
+      drop: async (...args) => {
+        for (const handler of handlers) await handler(...args);
+      },
+    };
+  }
+
   function findVueDispatcher() {
+    const mountedDispatcher = vueTracker?.dispatchers?.[vueTracker.dispatchers.length - 1];
+    if (mountedDispatcher) return mountedDispatcher;
     const seenComponents = new Set();
     const seenVNodes = new Set();
     const findInComponent = component => {
       if (!component || seenComponents.has(component)) return null;
       seenComponents.add(component);
-      const handlers = [component.vnode?.props, component.props, component.attrs]
-        .flatMap(handlerList);
-      if (handlers.length) {
-        return {
-          component,
-          drop: async (...args) => {
-            for (const handler of handlers) await handler(...args);
-          },
-        };
-      }
+      const dispatcher = dispatcherFromComponent(component);
+      if (dispatcher) return dispatcher;
       return findInVNode(component.subTree) || findInVNode(component.vnode);
     };
     const findInVNode = vnode => {

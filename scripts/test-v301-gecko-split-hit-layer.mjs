@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../dist/workshop-v3.05.js', import.meta.url), 'utf8');
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
 
-assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.6'"), 'Gecko 扩展版本号不是 3.1.6');
+assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.7'"), 'Gecko 扩展版本号不是 3.1.7');
 assert.ok(entry.includes("new URL('./workshop-v3.05.js', import.meta.url)"), '启动器没有指向 v3.05 业务入口');
 
 const handle = source.match(/#preset-manager-main-panel \.pmm-split-handle--top\{([\s\S]*?)\n  \}/)?.[1] || '';

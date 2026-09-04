@@ -9,11 +9,13 @@ const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', im
 const toolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const bridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
 
-assert.equal(manifest.version, '3.1.6', 'Gecko 世界书版必须更新 manifest 版本');
+assert.equal(manifest.version, '3.1.7', 'Gecko 世界书版必须更新 manifest 版本');
 for (const marker of [
-  "new URL('./worldbook-stitch-gecko.js', import.meta.url)",
-  "new URL('./worldbook-preset-drop-bridge-gecko.js', import.meta.url)",
-  "new URL('./worldbook-toolbar-entry-gecko.js', import.meta.url)",
+  "const appendRuntimeVersion = url =>",
+  "url.searchParams.set('v', EXTENSION_VERSION)",
+  "appendRuntimeVersion(new URL('./worldbook-stitch-gecko.js', import.meta.url))",
+  "appendRuntimeVersion(new URL('./worldbook-preset-drop-bridge-gecko.js', import.meta.url))",
+  "appendRuntimeVersion(new URL('./worldbook-toolbar-entry-gecko.js', import.meta.url))",
   "const worldbookLoaderKey = '__PMM_LOAD_WORLDBOOK_STITCH__'",
   '<script src="${schedulerUrl}"></script>',
   '<script src="${worldbookBridgeUrl}"></script>',
@@ -55,6 +57,10 @@ for (const marker of [
   'function ownerWindows()',
   'function installVueAppTracker()',
   'function findVueDispatcher()',
+  'app.mixin({',
+  'mounted() {',
+  'dispatcherFromComponent(this.$)',
+  'const mountedDispatcher = vueTracker?.dispatchers?.[vueTracker.dispatchers.length - 1];',
   'const vueTracker = installVueAppTracker();',
   'for (const owner of ownerWindows())',
   'source.onCrossPanelDrop',
@@ -65,6 +71,7 @@ for (const marker of [
 }
 
 let receivedDrop = null;
+let mountedHook = null;
 const nativeDrop = async (...args) => { receivedDrop = args; };
 const promptPanel = {
   vnode: { props: { prompts: [{ id: 'target', name: '目标条目' }], onCrossPanelDrop: nativeDrop } },
@@ -80,6 +87,7 @@ const app = {
     subTree: { component: promptPanel, props: { onCrossPanelDrop: nativeDrop }, children: [] },
   },
   mount() { return null; },
+  mixin(options) { mountedHook = options?.mounted || null; },
 };
 const bridgeDocument = { querySelector: () => null };
 const bridgeWindow = { document: bridgeDocument, console, Vue: { createApp: () => app } };
@@ -88,6 +96,8 @@ bridgeWindow.top = bridgeWindow;
 const bridgeContext = { window: bridgeWindow, document: bridgeDocument, console, Set, Object, Array, String, Boolean, Promise };
 vm.runInNewContext(bridge, bridgeContext);
 bridgeWindow.Vue.createApp().mount();
+assert.equal(typeof mountedHook, 'function', 'Gecko Vue 应用桥必须注册组件挂载捕获器');
+mountedHook.call({ $: promptPanel });
 const bridgeResult = await bridgeWindow.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__.drop({
   entries: [{ id: 'world-entry' }],
   targetId: 'target',
