@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
 
 const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
@@ -8,7 +9,7 @@ const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', im
 const toolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const bridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
 
-assert.equal(manifest.version, '3.1.5', 'Gecko 世界书版必须更新 manifest 版本');
+assert.equal(manifest.version, '3.1.6', 'Gecko 世界书版必须更新 manifest 版本');
 for (const marker of [
   "new URL('./worldbook-stitch-gecko.js', import.meta.url)",
   "new URL('./worldbook-preset-drop-bridge-gecko.js', import.meta.url)",
@@ -52,6 +53,9 @@ for (const marker of [
   'function findDispatcher()',
   'const PARENT = (() => { try { return window.parent || window; } catch (_) { return window; } })();',
   'function ownerWindows()',
+  'function installVueAppTracker()',
+  'function findVueDispatcher()',
+  'const vueTracker = installVueAppTracker();',
   'for (const owner of ownerWindows())',
   'source.onCrossPanelDrop',
   "reason: 'target-not-resolved'",
@@ -59,6 +63,41 @@ for (const marker of [
 ]) {
   assert.ok(bridge.includes(marker), `Gecko 世界书拖入预设桥缺少实现：${marker}`);
 }
+
+let receivedDrop = null;
+const nativeDrop = async (...args) => { receivedDrop = args; };
+const promptPanel = {
+  vnode: { props: { prompts: [{ id: 'target', name: '目标条目' }], onCrossPanelDrop: nativeDrop } },
+  props: { prompts: [{ id: 'target', name: '目标条目' }] },
+  attrs: {},
+  subTree: null,
+};
+const app = {
+  _instance: {
+    vnode: { props: {} },
+    props: {},
+    attrs: {},
+    subTree: { component: promptPanel, props: { onCrossPanelDrop: nativeDrop }, children: [] },
+  },
+  mount() { return null; },
+};
+const bridgeDocument = { querySelector: () => null };
+const bridgeWindow = { document: bridgeDocument, console, Vue: { createApp: () => app } };
+bridgeWindow.parent = bridgeWindow;
+bridgeWindow.top = bridgeWindow;
+const bridgeContext = { window: bridgeWindow, document: bridgeDocument, console, Set, Object, Array, String, Boolean, Promise };
+vm.runInNewContext(bridge, bridgeContext);
+bridgeWindow.Vue.createApp().mount();
+const bridgeResult = await bridgeWindow.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__.drop({
+  entries: [{ id: 'world-entry' }],
+  targetId: 'target',
+  targetName: '目标条目',
+  position: 'before',
+  targetSectionId: 'baibai_group',
+});
+assert.equal(bridgeResult.ok, true, 'Gecko Vue 应用桥必须能找到原生拖入处理器');
+assert.equal(receivedDrop?.[1], 'target', 'Gecko Vue 应用桥必须传递目标条目');
+assert.equal(receivedDrop?.[3], 'baibai_group', 'Gecko Vue 应用桥必须传递柏宝箱目标分组');
 
 for (const marker of [
   'data-pmm-worldbook-placeholder',

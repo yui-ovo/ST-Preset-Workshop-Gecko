@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../dist/workshop-v3.05.js', import.meta.url), 'utf8');
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
 
-assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.5'"), 'Gecko 扩展版本号不是 3.1.5');
+assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.6'"), 'Gecko 扩展版本号不是 3.1.6');
 assert.ok(entry.includes("new URL('./workshop-v3.05.js', import.meta.url)"), '启动器没有指向 v3.05 业务入口');
 assert.ok(source.includes('const MOBILE_SPLIT_SAFE_ZONE = 36'), '底边触摸安全带高度不是 36px');
 assert.ok(source.includes('function captureMobileSplitSafeZone(event)'), '缺少底边捕获阶段拦截器');
