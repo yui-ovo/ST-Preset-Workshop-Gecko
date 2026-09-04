@@ -5,7 +5,7 @@ const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8
 const workshop = await readFile(new URL('../dist/workshop-v3.05.js', import.meta.url), 'utf8');
 const scheduler = await readFile(new URL('../bridge/gecko-frame-scheduler.js', import.meta.url), 'utf8');
 
-assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.0'"), 'Gecko 扩展版本号不是 3.1.0');
+assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.1'"), 'Gecko 扩展版本号不是 3.1.1');
 assert.ok(entry.includes("new URL('./workshop-v3.05.js', import.meta.url)"), '启动器没有指向 v3.05 业务入口');
 assert.ok(entry.indexOf('<script src="${schedulerUrl}"></script>') < entry.indexOf('vue.runtime.global.prod.min.js'), '顶层帧调度桥没有在 Vue 前加载');
 assert.ok(scheduler.includes('globalThis.requestAnimationFrame = callback => hostRequestAnimationFrame'), '后台 iframe 的 rAF 没有委托给顶层窗口');

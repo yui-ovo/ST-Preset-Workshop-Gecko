@@ -12,6 +12,14 @@
   const MULTI_DRAG_FLOAT_WIDTH = 198;
   const MULTI_DRAG_FLOAT_HEIGHT = 58;
   const IS_ANDROID = /Android/i.test(String(TOP.navigator?.userAgent || SELF.navigator?.userAgent || ''));
+  /*
+   * Gecko 的旧移动主题补丁会持续检查并补建 .pmm-mobile-theme-toggle。
+   * 因此不能像普通版那样把该按钮挪进世界书工具栏：一旦挪走，旧补丁
+   * 就会认为按钮丢失并不断创建新的月亮按钮。
+   */
+  const IS_GECKO = /(?:Firefox|Fennec|GeckoView)/i.test(String(TOP.navigator?.userAgent || SELF.navigator?.userAgent || ''));
+  const GECKO_WORLD_TOUCH_HOLD_MS = 330;
+  const GECKO_WORLD_TOUCH_CANCEL_DISTANCE = 10;
   const MODE_CLASSES = ['pm-panel-container--merge-mode', 'pm-panel-container--branch-mode', 'pm-panel-container--favorite-mode'];
   const POSITION_OPTIONS = [
     [0, '角色定义之前'], [1, '角色定义之后'], [5, '示例消息之前'], [6, '示例消息之后'],
@@ -67,6 +75,9 @@
   let worldMultiDragGhost = null;
   let worldMultiDragFrame = 0;
   let worldMultiDragPoint = null;
+  let geckoWorldTouchPending = null;
+  let geckoWorldTouchDrag = null;
+  let geckoWorldTouchSuppressClickUntil = 0;
 
   function notify(type, message) {
     const toast = TOP.toastr?.[type] || SELF.toastr?.[type];
@@ -1655,7 +1666,7 @@
         button.classList.toggle('is-active', button.dataset.wbKind === state.topType);
       });
     }
-    if (switcher) {
+    if (switcher && !IS_GECKO) {
       let themeSlot = panel.querySelector('[data-pmm-theme-toolbar-slot]');
       if (!themeSlot) {
         themeSlot = DOC.createElement('span');
@@ -1667,7 +1678,20 @@
     panel.querySelector('[data-pmm-wb-native-transfer]')?.remove();
   }
 
+  function restoreGeckoThemeToggle(themeToggle = state.host?.querySelector?.('.pmm-mobile-theme-toggle')) {
+    if (!IS_GECKO) return;
+    const themeCard = state.nativeTop?.querySelector?.('.theme-switch-card');
+    if (!themeCard) return;
+    const toggles = Array.from(state.host?.querySelectorAll?.('.pmm-mobile-theme-toggle') || []);
+    const primary = themeCard.querySelector('.pmm-mobile-theme-toggle') || themeToggle || toggles[0];
+    if (primary && primary.parentElement !== themeCard) themeCard.append(primary);
+    /* 清掉此前版本已经生成的重复按钮；只保留带原有事件的一个。 */
+    toggles.forEach(toggle => { if (toggle !== primary) toggle.remove(); });
+  }
+
   function placeThemeToolbarButton(themeToggle = state.host?.querySelector?.('.pmm-mobile-theme-toggle')) {
+    /* Gecko 的主题按钮由自身补丁管理，见 restoreGeckoThemeToggle。 */
+    if (IS_GECKO) return;
     if (!themeToggle) return;
     const target = state.topType === 'world'
       ? state.topCard?.querySelector?.('[data-pmm-theme-toolbar-slot]')
@@ -1680,6 +1704,7 @@
     syncWorldSearchHighlightTheme();
     saveScrolls();
     const themeToggle = state.host.querySelector('.pmm-mobile-theme-toggle');
+    restoreGeckoThemeToggle(themeToggle);
     state.topCard?.remove();
     state.bottomCard?.remove();
     state.topCard = null;
@@ -1702,6 +1727,7 @@
       renderFrame = 0;
       syncWorldSearchHighlightTheme();
       decorateNativeTop();
+      restoreGeckoThemeToggle();
       placeThemeToolbarButton();
       markWorldbookButton();
     });
@@ -2400,6 +2426,149 @@
     card.classList.add(placement?.position === 'before' ? 'pmm-wb-entry--drop-before' : 'pmm-wb-entry--drop-after');
   }
 
+  /*
+   * Firefox Android 不会把触摸手势转换成 HTML5 dragstart/drop。世界书不应
+   * 依赖总工坊的可选拖拽兼容开关，因此这里只为世界书条目补一个长按桥；
+   * 其余落点判断仍完全复用下面的 onDragStart/onDragOver/onDrop。
+   */
+  function canUseGeckoWorldTouchDrag() {
+    if (!IS_GECKO || !state.open) return false;
+    if (IS_ANDROID) return true;
+    try { return Boolean(TOP.matchMedia?.('(max-width: 768px)')?.matches); } catch (_) { return false; }
+  }
+
+  function touchPointById(list, identifier) {
+    return Array.from(list || []).find(touch => touch.identifier === identifier) || null;
+  }
+
+  function geckoWorldTouchDistance(a, b) {
+    return Math.hypot(Number(a?.clientX || 0) - Number(b?.clientX || 0), Number(a?.clientY || 0) - Number(b?.clientY || 0));
+  }
+
+  function createGeckoWorldDataTransfer() {
+    const values = new Map();
+    return {
+      effectAllowed: 'copyMove',
+      dropEffect: 'move',
+      get types() { return Array.from(values.keys()); },
+      setData(type, value) { values.set(String(type), String(value)); },
+      getData(type) { return values.get(String(type)) || ''; },
+      clearData(type) { if (type === undefined) values.clear(); else values.delete(String(type)); },
+      setDragImage() {},
+    };
+  }
+
+  function dispatchGeckoWorldDrag(type, target, point, dataTransfer) {
+    if (!target || !point) return null;
+    const init = {
+      bubbles: true,
+      cancelable: true,
+      clientX: Number(point.clientX) || 0,
+      clientY: Number(point.clientY) || 0,
+      screenX: Number(point.screenX) || 0,
+      screenY: Number(point.screenY) || 0,
+      dataTransfer,
+    };
+    let event = null;
+    try { event = new TOP.DragEvent(type, init); } catch (_) { event = new TOP.Event(type, init); }
+    for (const [key, value] of Object.entries(init)) {
+      if (key === 'bubbles' || key === 'cancelable') continue;
+      try { Object.defineProperty(event, key, { configurable:true, value }); } catch (_) {}
+    }
+    target.dispatchEvent(event);
+    return event;
+  }
+
+  function geckoWorldTouchDropTarget(point) {
+    const node = DOC.elementFromPoint?.(Number(point?.clientX), Number(point?.clientY));
+    if (!node?.closest || !state.host?.contains(node)) return null;
+    const worldTarget = node.closest('.pmm-wb-entry[data-wb-entry],[data-wb-list]');
+    if (worldTarget) return worldTarget;
+    if (state.topType !== 'preset') return null;
+    return node.closest('.pm-main-wrapper > .preset-panel .prompt-panel__list,.prompt-item[data-prompt-id],.prompt-card[data-prompt-id]');
+  }
+
+  function clearGeckoWorldTouchPending() {
+    if (!geckoWorldTouchPending) return;
+    if (geckoWorldTouchPending.timer) TOP.clearTimeout(geckoWorldTouchPending.timer);
+    geckoWorldTouchPending = null;
+  }
+
+  function endGeckoWorldTouchDrag(point, shouldDrop) {
+    const current = geckoWorldTouchDrag;
+    if (!current) return false;
+    geckoWorldTouchDrag = null;
+    geckoWorldTouchSuppressClickUntil = Date.now() + 450;
+    const target = current.target || geckoWorldTouchDropTarget(point);
+    if (shouldDrop && target) dispatchGeckoWorldDrag('drop', target, point, current.dataTransfer);
+    dispatchGeckoWorldDrag('dragend', current.source, point, current.dataTransfer);
+    return true;
+  }
+
+  function onGeckoWorldTouchStart(event) {
+    if (!canUseGeckoWorldTouchDrag() || event.touches?.length !== 1) return;
+    const source = event.target?.closest?.('[data-wb-drag-side][data-wb-drag-key]');
+    if (!source || !state.host?.contains(source)) return;
+    if (event.target.closest?.('input,textarea,select,a,[contenteditable="true"],.pmm-wb-check,.pmm-wb-expand,.pmm-wb-toggle,.pmm-wb-entry-actions,[data-wb-field]')) return;
+    const touch = event.touches[0];
+    clearGeckoWorldTouchPending();
+    const pending = { source, identifier: touch.identifier, point: touch, timer: 0 };
+    pending.timer = TOP.setTimeout(() => {
+      if (geckoWorldTouchPending !== pending || !state.open || !source.isConnected) return;
+      geckoWorldTouchPending = null;
+      const dataTransfer = createGeckoWorldDataTransfer();
+      dispatchGeckoWorldDrag('dragstart', source, pending.point, dataTransfer);
+      if (!dragPayload) return;
+      geckoWorldTouchDrag = { source, identifier: pending.identifier, dataTransfer, target: geckoWorldTouchDropTarget(pending.point) };
+      if (geckoWorldTouchDrag.target) dispatchGeckoWorldDrag('dragover', geckoWorldTouchDrag.target, pending.point, dataTransfer);
+    }, GECKO_WORLD_TOUCH_HOLD_MS);
+    geckoWorldTouchPending = pending;
+  }
+
+  function onGeckoWorldTouchMove(event) {
+    const pending = geckoWorldTouchPending;
+    if (pending) {
+      const touch = touchPointById(event.touches, pending.identifier);
+      if (!touch || geckoWorldTouchDistance(touch, pending.point) > GECKO_WORLD_TOUCH_CANCEL_DISTANCE) clearGeckoWorldTouchPending();
+    }
+    const current = geckoWorldTouchDrag;
+    if (!current) return;
+    const touch = touchPointById(event.touches, current.identifier);
+    if (!touch) return;
+    event.preventDefault();
+    const target = geckoWorldTouchDropTarget(touch);
+    if (target !== current.target) {
+      if (current.target) dispatchGeckoWorldDrag('dragleave', current.target, touch, current.dataTransfer);
+      if (target) dispatchGeckoWorldDrag('dragenter', target, touch, current.dataTransfer);
+      current.target = target;
+    }
+    if (target) dispatchGeckoWorldDrag('dragover', target, touch, current.dataTransfer);
+  }
+
+  function onGeckoWorldTouchEnd(event) {
+    const pending = geckoWorldTouchPending;
+    const ended = touchPointById(event.changedTouches, pending?.identifier);
+    if (pending && ended) {
+      clearGeckoWorldTouchPending();
+      return;
+    }
+    const current = geckoWorldTouchDrag;
+    const touch = touchPointById(event.changedTouches, current?.identifier);
+    if (!current || !touch) return;
+    event.preventDefault();
+    endGeckoWorldTouchDrag(touch, true);
+  }
+
+  function onGeckoWorldTouchCancel(event) {
+    const pending = geckoWorldTouchPending;
+    if (pending && touchPointById(event.changedTouches, pending.identifier)) clearGeckoWorldTouchPending();
+    const current = geckoWorldTouchDrag;
+    const touch = touchPointById(event.changedTouches, current?.identifier);
+    if (!current || !touch) return;
+    event.preventDefault();
+    endGeckoWorldTouchDrag(touch, false);
+  }
+
   function onDragStart(event) {
     if (!state.open) return;
     const custom = event.target.closest?.('[data-wb-drag-side][data-wb-drag-key]');
@@ -2507,6 +2676,12 @@
 
   function onDocumentClick(event) {
     if (!state.open) return;
+    if (Date.now() < geckoWorldTouchSuppressClickUntil) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      return;
+    }
     const modeButton = event.target.closest?.('.side-panel-root .panel-btn');
     if (modeButton && !modeButton.matches('[data-pmm-worldbook-placeholder="1"]')) {
       close();
@@ -2702,6 +2877,9 @@
     resetSide(state.bottom, true);
     context = null;
     dragPayload = null;
+    clearGeckoWorldTouchPending();
+    geckoWorldTouchDrag = null;
+    geckoWorldTouchSuppressClickUntil = 0;
     removeWorldMultiDragFloat();
     hostObserver?.disconnect();
     hostObserver = null;
@@ -2743,6 +2921,10 @@
     DOC.removeEventListener('dragover', onDragOver, true);
     DOC.removeEventListener('drop', onDrop, true);
     DOC.removeEventListener('dragend', clearDrag, true);
+    DOC.removeEventListener('touchstart', onGeckoWorldTouchStart, true);
+    DOC.removeEventListener('touchmove', onGeckoWorldTouchMove, true);
+    DOC.removeEventListener('touchend', onGeckoWorldTouchEnd, true);
+    DOC.removeEventListener('touchcancel', onGeckoWorldTouchCancel, true);
     try { if (TOP[API_KEY]?.cleanup === cleanup) delete TOP[API_KEY]; } catch (_) {}
   }
 
@@ -2767,6 +2949,10 @@
   DOC.addEventListener('dragover', onDragOver, true);
   DOC.addEventListener('drop', onDrop, true);
   DOC.addEventListener('dragend', clearDrag, true);
+  DOC.addEventListener('touchstart', onGeckoWorldTouchStart, { capture:true, passive:true });
+  DOC.addEventListener('touchmove', onGeckoWorldTouchMove, { capture:true, passive:false });
+  DOC.addEventListener('touchend', onGeckoWorldTouchEnd, { capture:true, passive:false });
+  DOC.addEventListener('touchcancel', onGeckoWorldTouchCancel, { capture:true, passive:false });
   TOP[API_KEY] = { open, close, cleanup, state };
   console.info('[预设工坊（Gecko兼容测试版）] 世界书已接入原生双卡片布局与条目落点排序。');
   console.info('[预设工坊（Gecko兼容测试版）] 世界书支持草稿保存、原生页刷新、角色搜索、查找替换与主题跟随。');
