@@ -384,16 +384,39 @@
     return operationTail;
   }
 
+  async function getLegacyWorldInfoNames() {
+    if (typeof context?.getRequestHeaders !== 'function') {
+      throw new Error('旧版酒馆缺少世界书列表读取所需的请求接口');
+    }
+    const response = await TOP.fetch('/api/settings/get', {
+      method: 'POST',
+      headers: context.getRequestHeaders(),
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) {
+      throw new Error(`旧版酒馆世界书列表读取失败（HTTP ${response.status}）`);
+    }
+    const data = await response.json();
+    return Array.isArray(data?.world_names) ? data.world_names : [];
+  }
+
+  async function getWorldInfoNamesCompatible() {
+    if (typeof context?.getWorldInfoNames === 'function') {
+      return await context.getWorldInfoNames();
+    }
+    return await getLegacyWorldInfoNames();
+  }
+
   async function refreshWorldNames() {
     context = getContext();
     if (!context?.loadWorldInfo || !context?.saveWorldInfo) {
       throw new Error('当前酒馆没有提供世界书读写接口');
     }
-    let names = await context.getWorldInfoNames?.();
+    let names = await getWorldInfoNamesCompatible();
     state.worldNames = [...(names || [])].map(String);
     if (!state.worldNames.length && context.updateWorldInfoList) {
       await context.updateWorldInfoList();
-      names = await context.getWorldInfoNames?.();
+      names = await getWorldInfoNamesCompatible();
       state.worldNames = [...(names || [])].map(String);
     }
     if (!state.bottom.name || !state.worldNames.includes(state.bottom.name)) {

@@ -9,7 +9,7 @@ const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', im
 const toolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const bridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
 
-assert.equal(manifest.version, '3.1.8', 'Gecko 世界书版必须更新 manifest 版本');
+assert.equal(manifest.version, '3.1.9', 'Gecko 世界书版必须更新 manifest 版本');
 for (const marker of [
   "const appendRuntimeVersion = url =>",
   "url.searchParams.set('v', EXTENSION_VERSION)",
@@ -49,10 +49,25 @@ for (const marker of [
   'function scheduleDropIndicatorCleanup()',
   'for (const delay of [0, 80, 240])',
   '.finally(scheduleDropIndicatorCleanup)',
+  'async function getLegacyWorldInfoNames()',
+  'async function getWorldInfoNamesCompatible()',
+  "await TOP.fetch('/api/settings/get'",
+  'Array.isArray(data?.world_names) ? data.world_names : []',
   "DOC.addEventListener('touchmove', onGeckoWorldTouchMove, { capture:true, passive:false });",
 ]) {
   assert.ok(worldbook.includes(marker), `Gecko 世界书功能缺少实现：${marker}`);
 }
+
+const legacyNamesStart = worldbook.indexOf('  async function getLegacyWorldInfoNames()');
+const compatibleNamesStart = worldbook.indexOf('  async function getWorldInfoNamesCompatible()', legacyNamesStart);
+const refreshNamesStart = worldbook.indexOf('  async function refreshWorldNames()', compatibleNamesStart);
+const compatibleNames = worldbook.slice(compatibleNamesStart, refreshNamesStart);
+const refreshNames = worldbook.slice(refreshNamesStart, worldbook.indexOf('  function helperFunction(', refreshNamesStart));
+assert.ok(compatibleNames.includes("if (typeof context?.getWorldInfoNames === 'function')"), 'Gecko 1.18 必须继续使用原生世界书枚举接口');
+assert.ok(compatibleNames.includes('return await context.getWorldInfoNames();'), 'Gecko 1.18 原生枚举调用缺失');
+assert.ok(compatibleNames.includes('return await getLegacyWorldInfoNames();'), 'Gecko 1.14 旧版枚举兜底缺失');
+assert.ok(!compatibleNames.includes('worldNames.length'), 'Gecko 不得因 1.18 暂时返回空列表而误切换旧版接口');
+assert.equal(refreshNames.match(/await getWorldInfoNamesCompatible\(\)/g)?.length, 2, 'Gecko 初次读取和原生刷新后都必须使用兼容入口');
 assert.ok(!worldbook.includes('fallbackBaiBaiGroupedPresetDrop'), 'Gecko 的柏宝箱分组桥失败时不得直接写入局部预设数据');
 assert.ok(worldbook.includes("notify('error', '目标分组已识别，但未取得工坊拖入处理器；已取消拖入以避免条目掉到组外');"), 'Gecko 分组桥不可用时必须安全取消');
 
