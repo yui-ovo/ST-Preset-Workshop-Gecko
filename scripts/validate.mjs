@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 
 const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
-const workshop = await readFile(new URL('../dist/workshop-v3.07.js', import.meta.url), 'utf8');
+const workshop = await readFile(new URL('../dist/workshop-v3.08.js', import.meta.url), 'utf8');
 const presetEditor = await readFile(new URL('../dist/preset-content-editor.js', import.meta.url), 'utf8');
 const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', import.meta.url), 'utf8');
 const worldbookToolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
@@ -33,7 +33,7 @@ if (workshop.length < 1_000_000 || !workshop.includes('V3.06 Gecko 已加载')) 
   throw new Error(`v3.06 Gecko 业务入口不完整：${workshop.length} 字符`);
 }
 
-if (!entry.includes('workshop-v3.07.js') || !entry.includes('preset-content-editor.js') || !entry.includes('worldbook-stitch-gecko.js') || !entry.includes("const EXTENSION_VERSION = '3.1.11'")) {
+if (!entry.includes('workshop-v3.08.js') || !entry.includes('preset-content-editor.js') || !entry.includes('worldbook-stitch-gecko.js') || !entry.includes("const EXTENSION_VERSION = '3.1.12'")) {
   throw new Error('扩展启动器没有指向 v3.06 Gecko、独立预设正文编辑器与世界书模块');
 }
 

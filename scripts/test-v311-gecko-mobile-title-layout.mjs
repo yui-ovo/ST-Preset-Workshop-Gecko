@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const workshop = await readFile(new URL('../dist/workshop-v3.07.js', import.meta.url), 'utf8');
+const workshop = await readFile(new URL('../dist/workshop-v3.08.js', import.meta.url), 'utf8');
 const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', import.meta.url), 'utf8');
 
 assert.ok(worldbook.includes('data-pmm-wb-panel="${sideName}"'), '世界书卡片缺少上下位置标记');
@@ -48,4 +48,4 @@ assert.ok(!worldbook.includes('.title-action-btn[title^="导出"]'), '世界书�
 assert.ok(workshop.includes('function keepRuntimeFrameRenderable()'), 'Gecko 后台 iframe 兼容补丁丢失');
 assert.ok(worldbook.includes('const IS_GECKO = /(?:Firefox|Fennec|GeckoView)/i.test'), 'Gecko 世界书环境检测丢失');
 
-console.log('Gecko v3.1.11 手机标题布局通过，且 Gecko 专属兼容逻辑仍保留。');
+console.log('Gecko v3.1.12 手机标题布局通过，且 Gecko 专属兼容逻辑仍保留。');

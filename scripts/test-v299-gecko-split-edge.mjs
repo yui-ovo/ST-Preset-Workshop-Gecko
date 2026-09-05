@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v3.07.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v3.08.js', import.meta.url), 'utf8');
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
 
-assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.11'"), 'Gecko 扩展版本号不是 3.1.11');
-assert.ok(entry.includes("new URL('./workshop-v3.07.js', import.meta.url)"), '启动器没有指向 v3.05 业务入口');
+assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.12'"), 'Gecko 扩展版本号不是 3.1.12');
+assert.ok(entry.includes("new URL('./workshop-v3.08.js', import.meta.url)"), '启动器没有指向 v3.05 业务入口');
 assert.ok(source.includes('PMM_GECKO_SPLIT_EDGE_V299'), '缺少 Gecko 整宽底边比例抓手模块');
 assert.ok(source.includes('TOP.__PMM_GECKO_TOUCH_SCROLL_V296__?.cleanup?.()'), '更新时没有清理误加的内容滚动轨');
 
