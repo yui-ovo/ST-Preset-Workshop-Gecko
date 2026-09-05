@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
-const source = await readFile(new URL('../dist/workshop-v3.05.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v3.06.js', import.meta.url), 'utf8');
 
 assert.ok(!entry.includes('iframe.hidden = true'), 'Gecko 版仍把后台 iframe 标记为 hidden');
 assert.ok(entry.includes("left: '-10000px'"), 'Gecko 版缺少屏幕外可渲染 iframe 补丁');
-assert.ok(entry.includes("new URL('./workshop-v3.05.js', import.meta.url)"), '启动器没有指向当前 v3.05 Gecko');
+assert.ok(entry.includes("new URL('./workshop-v3.06.js', import.meta.url)"), '启动器没有指向当前 v3.06 Gecko');
 assert.ok(source.includes('function keepRuntimeFrameRenderable()'), 'Gecko 业务入口缺少后台 iframe 自修复');
 assert.ok(source.includes('function panelContentIsVisible(panel)'), 'Gecko 入口没有检查工坊主体首帧');
 

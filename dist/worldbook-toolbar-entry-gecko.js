@@ -9,11 +9,17 @@
   const BUTTON_MARK = 'data-pmm-worldbook-placeholder';
   const LOADER_KEY = '__PMM_LOAD_WORLDBOOK_STITCH__';
   const LOG_PREFIX = '[预设工坊（Gecko兼容测试版）]';
+  const TOP_NOTIFICATION_STORAGE_KEY = 'pmm_top_notifications_enabled_v1';
   let observer = null;
   let frameId = 0;
   let openingPromise = null;
 
   try { TOP[API_KEY]?.cleanup?.(); } catch (_) {}
+
+  function topNotificationsEnabled() {
+    try { return (TOP.localStorage || SELF.localStorage)?.getItem(TOP_NOTIFICATION_STORAGE_KEY) !== '0'; }
+    catch (_) { return true; }
+  }
 
   function copyScopeAttributes(source, target) {
     if (!source || !target) return;
@@ -52,7 +58,9 @@
       await openWorldbook();
     } catch (error) {
       console.error(`${LOG_PREFIX} 世界书按需加载失败`, error);
-      TOP.toastr?.error?.('世界书加载失败，请重试', '预设工坊（Gecko兼容测试版）');
+      if (topNotificationsEnabled()) {
+        TOP.toastr?.error?.('世界书加载失败，请重试', '预设工坊（Gecko兼容测试版）');
+      }
     } finally {
       button?.removeAttribute('aria-busy');
       button?.removeAttribute('data-pmm-worldbook-loading');

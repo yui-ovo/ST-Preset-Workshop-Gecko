@@ -1,5 +1,5 @@
 const EXTENSION_NAME = '🧩预设工坊（Gecko兼容测试版）';
-const EXTENSION_VERSION = '3.1.9';
+const EXTENSION_VERSION = '3.1.10';
 const RUNTIME_ID = 'TH-script--🧩预设工坊（Gecko 兼容扩展）--45dd76e4-8cce-41df-921f-9ebc856a9f25';
 const LEGACY_IFRAME_PREFIX = 'TH-script--🧩预设工坊';
 const EXTENSION_FOLDER_NAME = 'ST-Preset-Workshop-Gecko';
@@ -9,6 +9,7 @@ const VERSION_CHECK_INTERVAL = 30_000;
 const RAPID_VERSION_CHECK_INTERVAL = 750;
 const RAPID_VERSION_CHECK_TIMEOUT = 65_000;
 const NATIVE_UPDATE_RELOAD_DELAY = 1_000;
+const TOP_NOTIFICATION_STORAGE_KEY = 'pmm_top_notifications_enabled_v1';
 
 let versionCheckTimer = null;
 let versionCheckBusy = false;
@@ -20,7 +21,17 @@ let bulkExtensionUpdateInProgress = false;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+function topNotificationsEnabled() {
+  try { return globalThis.localStorage?.getItem(TOP_NOTIFICATION_STORAGE_KEY) !== '0'; }
+  catch (_) { return true; }
+}
+
 function notify(type, message) {
+  if (!topNotificationsEnabled()) {
+    const logger = type === 'error' ? console.error : type === 'warning' ? console.warn : (console.debug || console.info);
+    logger?.call(console, `[${EXTENSION_NAME}][顶部通知已关闭]`, message);
+    return;
+  }
   const toast = globalThis.toastr?.[type];
   if (typeof toast === 'function') {
     toast(message, EXTENSION_NAME);
@@ -216,7 +227,7 @@ function buildRuntimeDocument() {
   const schedulerUrl = appendRuntimeVersion(new URL('../bridge/gecko-frame-scheduler.js', import.meta.url));
   const parentJqueryUrl = appendRuntimeVersion(new URL('../bridge/parent-jquery.js', import.meta.url));
   const predefineUrl = appendRuntimeVersion(new URL('../bridge/predefine.js', import.meta.url));
-  const workshopUrl = appendRuntimeVersion(new URL('./workshop-v3.05.js', import.meta.url));
+  const workshopUrl = appendRuntimeVersion(new URL('./workshop-v3.06.js', import.meta.url));
   const presetContentEditorUrl = appendRuntimeVersion(new URL('./preset-content-editor.js', import.meta.url));
   const worldbookStitchUrl = appendRuntimeVersion(new URL('./worldbook-stitch-gecko.js', import.meta.url));
   const worldbookBridgeUrl = appendRuntimeVersion(new URL('./worldbook-preset-drop-bridge-gecko.js', import.meta.url));
@@ -332,7 +343,7 @@ export async function startPresetWorkshop() {
   document.body.appendChild(iframe);
 
   iframe.addEventListener('load', () => {
-    console.info(`[${EXTENSION_NAME}] GitHub 扩展运行环境已启动（v3.05 Gecko）`);
+    console.info(`[${EXTENSION_NAME}] GitHub 扩展运行环境已启动（v3.06 Gecko）`);
   }, { once: true });
 
   return iframe;

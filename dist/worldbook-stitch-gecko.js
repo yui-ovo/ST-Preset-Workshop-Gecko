@@ -11,6 +11,7 @@
   const HISTORY_LIMIT = 20;
   const MULTI_DRAG_FLOAT_WIDTH = 198;
   const MULTI_DRAG_FLOAT_HEIGHT = 58;
+  const TOP_NOTIFICATION_STORAGE_KEY = 'pmm_top_notifications_enabled_v1';
   const IS_ANDROID = /Android/i.test(String(TOP.navigator?.userAgent || SELF.navigator?.userAgent || ''));
   /*
    * Gecko 的旧移动主题补丁会持续检查并补建 .pmm-mobile-theme-toggle。
@@ -79,7 +80,17 @@
   let geckoWorldTouchDrag = null;
   let geckoWorldTouchSuppressClickUntil = 0;
 
+  function topNotificationsEnabled() {
+    try { return (TOP.localStorage || SELF.localStorage)?.getItem(TOP_NOTIFICATION_STORAGE_KEY) !== '0'; }
+    catch (_) { return true; }
+  }
+
   function notify(type, message) {
+    if (!topNotificationsEnabled()) {
+      const logger = type === 'error' ? console.error : type === 'warning' ? console.warn : (console.debug || console.info);
+      logger?.call(console, '[世界书缝合][顶部通知已关闭]', message);
+      return;
+    }
     const toast = TOP.toastr?.[type] || SELF.toastr?.[type];
     if (typeof toast === 'function') toast(message, '世界书缝合');
     else console[type === 'error' ? 'error' : 'info'](`[世界书缝合] ${message}`);
@@ -1813,7 +1824,6 @@
       if (copy) side.expanded.add(entryKey(copy));
       markWorldDraftDirty(side);
       renderPanels();
-      notify('success', '已复制条目');
     });
   }
 
@@ -1853,7 +1863,6 @@
           await loadWorldSide(state.bottom);
           if (state.topType === 'world') await loadWorldSide(state.top);
           renderPanels();
-          notify('success', `世界书已重命名为“${selectedName}”`);
           return;
         }
       }
@@ -2155,7 +2164,6 @@
       return enqueue('保存世界书', async () => {
         await saveWorldSide(side);
         renderPanels();
-        notify('success', '世界书已保存');
       });
     }
     if (action === 'exit') return close();
