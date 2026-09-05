@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
-const source = await readFile(new URL('../dist/workshop-v3.06.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../dist/workshop-v3.07.js', import.meta.url), 'utf8');
 
 assert.ok(!entry.includes('iframe.hidden = true'), 'Gecko 版仍把后台 iframe 标记为 hidden');
 assert.ok(entry.includes("left: '-10000px'"), 'Gecko 版缺少屏幕外可渲染 iframe 补丁');
-assert.ok(entry.includes("new URL('./workshop-v3.06.js', import.meta.url)"), '启动器没有指向当前 v3.06 Gecko');
+assert.ok(entry.includes("new URL('./workshop-v3.07.js', import.meta.url)"), '启动器没有指向当前 v3.06 Gecko');
 assert.ok(source.includes('function keepRuntimeFrameRenderable()'), 'Gecko 业务入口缺少后台 iframe 自修复');
 assert.ok(source.includes('function panelContentIsVisible(panel)'), 'Gecko 入口没有检查工坊主体首帧');
 
@@ -37,13 +37,17 @@ assert.ok(capture.includes("customKey:'branchWidth'"), '分支名称框没有使
 assert.ok(!capture.includes("valueKey:'presetWidth'"), '预设宽度测量仍会改写滑杆值');
 assert.ok(!capture.includes("valueKey:'branchWidth'"), '分支宽度测量仍会改写滑杆值');
 
-const presetCssStart = source.indexOf('/* “预设名称框长度”同步控制主预设和缝合页');
+const presetCssStart = source.indexOf('/* 外层标题视窗始终固定；默认时只让内部名称缩短，以保证搜索和铅笔可见。 */');
 const branchCssStart = source.indexOf('/* 分支卡片使用独立的“分支名称框长度”', presetCssStart);
 const cssEnd = source.indexOf('#preset-manager-main-panel.pmm-layout-custom-split-ratio', branchCssStart);
 assert.ok(presetCssStart >= 0 && branchCssStart > presetCssStart && cssEnd > branchCssStart, '无法隔离双标题宽度样式');
 const presetCss = source.slice(presetCssStart, branchCssStart);
 const branchCss = source.slice(branchCssStart, cssEnd);
-assert.ok(presetCss.includes('.pm-panel-container--merge-mode > .preset-panel .title-row'), '预设滑杆未命中缝合下方标题');
+assert.ok(presetCss.includes('.pm-main-wrapper .pm-header .title-row'), '预设滑杆未命中上方原生标题');
+assert.ok(presetCss.includes('.pm-panel-container--merge-mode > .preset-panel .pm-header .title-row'), '预设滑杆未命中缝合下方原生预设标题');
+assert.ok(presetCss.includes('.pmm-wb-inline-panel[data-pmm-wb-panel="top"] .pmm-wb-source-select'), '预设滑杆未命中上方世界书标题');
+assert.ok(!presetCss.includes('.pm-panel-container--merge-mode > .preset-panel .title-row'), '存在未限定 pm-header 的宽泛下方卡片规则');
+assert.ok(!presetCss.includes('data-pmm-wb-panel="bottom"'), '预设滑杆仍会改变下方世界书标题');
 assert.ok(!presetCss.includes('.pm-panel-container--branch-mode'), '预设滑杆仍会改变分支标题');
 assert.ok(branchCss.includes('.pm-panel-container--branch-mode > .preset-panel .title-row'), '分支滑杆未命中分支标题');
 assert.ok(!branchCss.includes('.pm-panel-container--merge-mode'), '分支滑杆仍会改变缝合标题');

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const workshop = await readFile(new URL('../dist/workshop-v3.06.js', import.meta.url), 'utf8');
+const workshop = await readFile(new URL('../dist/workshop-v3.07.js', import.meta.url), 'utf8');
 const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', import.meta.url), 'utf8');
 const toolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
@@ -129,7 +129,7 @@ for (const forcedSetting of ['toastr.options.timeOut=300', 'toastr.options.exten
 assert.ok(workshop.includes('const toastr = new Proxy'), 'Gecko 工坊通知没有限制在自身作用域');
 assert.ok(!workshop.includes('globalThis.toastr ='), 'Gecko 顶部通知开关不应替换全局 toastr');
 assert.ok(workshop.includes('V3.06 Gecko 已加载：精简重复通知'), '缺少 Gecko v3.06 运行标记');
-assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.10'"), 'Gecko 启动器版本未更新');
-assert.ok(entry.includes("new URL('./workshop-v3.06.js'"), 'Gecko 启动器没有加载 v3.06');
+assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.11'"), 'Gecko 启动器版本未更新');
+assert.ok(entry.includes("new URL('./workshop-v3.07.js'"), 'Gecko 启动器没有加载 v3.06');
 
-console.log('Gecko v3.1.10 通知移植测试通过：精简、开关、原生时长与独有补丁均已保留。');
+console.log('Gecko v3.1.11 通知移植测试通过：精简、开关、原生时长与独有补丁均已保留。');
