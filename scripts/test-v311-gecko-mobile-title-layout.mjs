@@ -48,4 +48,4 @@ assert.ok(!worldbook.includes('.title-action-btn[title^="导出"]'), '世界书�
 assert.ok(workshop.includes('function keepRuntimeFrameRenderable()'), 'Gecko 后台 iframe 兼容补丁丢失');
 assert.ok(worldbook.includes('const IS_GECKO = /(?:Firefox|Fennec|GeckoView)/i.test'), 'Gecko 世界书环境检测丢失');
 
-console.log('Gecko v3.1.13 手机标题布局通过，且 Gecko 专属兼容逻辑仍保留。');
+console.log('Gecko v3.1.14 手机标题布局通过，且 Gecko 专属兼容逻辑仍保留。');

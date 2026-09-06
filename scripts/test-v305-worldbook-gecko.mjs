@@ -9,7 +9,7 @@ const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', im
 const toolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const bridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
 
-assert.equal(manifest.version, '3.1.13', 'Gecko 世界书版必须更新 manifest 版本');
+assert.equal(manifest.version, '3.1.14', 'Gecko 世界书版必须更新 manifest 版本');
 for (const marker of [
   "const appendRuntimeVersion = url =>",
   "url.searchParams.set('v', EXTENSION_VERSION)",

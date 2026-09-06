@@ -13722,6 +13722,14 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
   let autoApplyTimer = 0;
   let autoApplySerial = 0;
   let lastAutoContextKey = '';
+  /*
+   * Gecko 的工坊逻辑运行在 1px 的后台 iframe；真正可见的标题栏则在
+   * normalPresetContainer() 找到的宿主文档中。所有会显示 UI 的节点必须
+   * 以这个 ownerDocument 为准，不能在启动时永久绑定到后台 iframe 的 DOC。
+   */
+  let overlayDocument = null;
+  const styledDocuments = new Set();
+  const clickDocuments = new Set();
 
   const text = value => String(value ?? '').trim();
   const clone = value => {
@@ -13856,6 +13864,53 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
     visit(SELF);
     visit(TOP);
     return result;
+  }
+
+  function visibleWorkshopDocument() {
+    try {
+      const container = normalPresetContainer();
+      if (container?.ownerDocument?.body) return container.ownerDocument;
+    } catch (_) {}
+    if (observedPanel?.ownerDocument?.body) return observedPanel.ownerDocument;
+    for (const currentDocument of workshopDocuments()) {
+      try {
+        if (currentDocument?.body && currentDocument.getElementById?.('preset-manager-main-panel')) return currentDocument;
+      } catch (_) {}
+    }
+    return DOC?.body ? DOC : null;
+  }
+
+  function managedDocuments() {
+    const documents = new Set();
+    const add = currentDocument => {
+      if (currentDocument?.querySelectorAll) documents.add(currentDocument);
+    };
+    add(DOC);
+    add(overlayDocument);
+    for (const currentDocument of styledDocuments) add(currentDocument);
+    for (const currentDocument of clickDocuments) add(currentDocument);
+    for (const currentDocument of workshopDocuments()) add(currentDocument);
+    add(visibleWorkshopDocument());
+    return [...documents];
+  }
+
+  function snapshotNodes(selector) {
+    const nodes = [];
+    for (const currentDocument of managedDocuments()) {
+      try { nodes.push(...currentDocument.querySelectorAll(selector)); } catch (_) {}
+    }
+    return nodes;
+  }
+
+  function overlayNode() {
+    const primaryDocument = overlayDocument || visibleWorkshopDocument();
+    const primary = primaryDocument?.getElementById?.(OVERLAY_ID);
+    if (primary) return primary;
+    for (const currentDocument of managedDocuments()) {
+      const overlay = currentDocument.getElementById?.(OVERLAY_ID);
+      if (overlay) return overlay;
+    }
+    return null;
   }
 
   function isBranchMode() {
@@ -14069,7 +14124,9 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
   }
 
   function sectionGroupStore() {
-    const root = DOC?.querySelector?.('#preset-manager-main-panel');
+    const container = normalPresetContainer();
+    const root = container?.closest?.('#preset-manager-main-panel')
+      || visibleWorkshopDocument()?.getElementById?.('preset-manager-main-panel');
     const app = root?.__vue_app__;
     const provides = app?._context?.provides || root?.__vueParentComponent?.appContext?.provides;
     if (!provides) return null;
@@ -14842,7 +14899,10 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
     composer = null;
     openMenuId = '';
     characterPicker = null;
-    DOC?.getElementById?.(OVERLAY_ID)?.remove();
+    for (const currentDocument of managedDocuments()) {
+      currentDocument.getElementById?.(OVERLAY_ID)?.remove();
+    }
+    overlayDocument = null;
   }
 
   function openComposer() {
@@ -14869,7 +14929,7 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
   function syncCaptureModeUI() {
     const active = isCaptureMode();
     const container = normalPresetContainer();
-    for (const node of DOC?.querySelectorAll?.('.pmm-switch-snapshot-capture-mode') || []) {
+    for (const node of snapshotNodes('.pmm-switch-snapshot-capture-mode')) {
       if (node !== container) node.classList.remove('pmm-switch-snapshot-capture-mode');
     }
     if (container && container.classList.contains('pmm-switch-snapshot-capture-mode') !== active) {
@@ -14930,7 +14990,7 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
   }
 
   function renderCaptureSavePrompt() {
-    const existing = DOC?.getElementById?.(OVERLAY_ID);
+    const existing = overlayNode();
     if (!existing) return;
     const presetName = currentPresetName();
     existing.innerHTML = `<section class="pmm-switch-snapshot-dialog pmm-switch-snapshot-save-capture-dialog" role="dialog" aria-modal="true" aria-label="保存快照">
@@ -14971,7 +15031,7 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
   }
 
   function renderFirstDefaultPrompt() {
-    const existing = DOC?.getElementById?.(OVERLAY_ID);
+    const existing = overlayNode();
     if (!existing) return;
     const presetName = currentPresetName();
     existing.innerHTML = `<section class="pmm-switch-snapshot-dialog pmm-switch-snapshot-first-default-dialog" role="dialog" aria-modal="true" aria-label="保存预设默认">
@@ -15042,7 +15102,7 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
   }
 
   function renderOverlay() {
-    const existing = DOC?.getElementById?.(OVERLAY_ID);
+    const existing = overlayNode();
     if (!existing) return;
     const presetName = currentPresetName();
     const character = currentCharacter();
@@ -15137,9 +15197,16 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
   }
 
   function ensureOverlay() {
-    let overlay = DOC?.getElementById?.(OVERLAY_ID);
+    const targetDocument = visibleWorkshopDocument();
+    if (!targetDocument?.body) return null;
+    installStyle(targetDocument);
+    installDocumentClick(targetDocument);
+    for (const currentDocument of managedDocuments()) {
+      if (currentDocument !== targetDocument) currentDocument.getElementById?.(OVERLAY_ID)?.remove();
+    }
+    let overlay = targetDocument.getElementById?.(OVERLAY_ID);
     if (!overlay) {
-      overlay = DOC.createElement('div');
+      overlay = targetDocument.createElement('div');
       overlay.id = OVERLAY_ID;
       overlay.className = 'pmm-switch-snapshot-overlay';
       overlay.addEventListener('click', event => {
@@ -15215,8 +15282,9 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
           closeComposer();
         }
       });
-      DOC.body.appendChild(overlay);
+      targetDocument.body.appendChild(overlay);
     }
+    overlayDocument = targetDocument;
     return overlay;
   }
 
@@ -15370,30 +15438,35 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
   function mountTrigger() {
     const actionsHost = normalTitleActions();
     const host = actionsHost;
+    const activeDocument = actionsHost?.ownerDocument || visibleWorkshopDocument();
+    if (activeDocument) {
+      installStyle(activeDocument);
+      installDocumentClick(activeDocument);
+    }
     const titleContent = actionsHost?.closest?.('.title-content') || null;
     const titleHost = titleContent?.closest?.('.header-left') || null;
     const desktopHomeContainer = actionsHost?.closest?.('.pm-panel-container') || null;
-    for (const node of DOC?.querySelectorAll?.(`.${HOME_TITLE_CLASS}`) || []) {
+    for (const node of snapshotNodes(`.${HOME_TITLE_CLASS}`)) {
       if (node !== titleContent) node.classList.remove(HOME_TITLE_CLASS, CAPTURE_TITLE_CLASS);
     }
-    for (const node of DOC?.querySelectorAll?.(`.${DESKTOP_HOME_TITLE_HOST_CLASS}`) || []) {
+    for (const node of snapshotNodes(`.${DESKTOP_HOME_TITLE_HOST_CLASS}`)) {
       if (node !== titleHost) node.classList.remove(DESKTOP_HOME_TITLE_HOST_CLASS);
     }
-    for (const node of DOC?.querySelectorAll?.(`.${DESKTOP_HOME_PANEL_CLASS}`) || []) {
+    for (const node of snapshotNodes(`.${DESKTOP_HOME_PANEL_CLASS}`)) {
       if (node !== desktopHomeContainer) node.classList.remove(DESKTOP_HOME_PANEL_CLASS);
     }
     syncCaptureModeUI();
-    const existing = DOC?.querySelectorAll?.(`.${TRIGGER_CLASS}`) || [];
+    const existing = snapshotNodes(`.${TRIGGER_CLASS}`);
     for (const button of existing) {
       if (button.parentElement !== host) button.remove();
     }
     const captureActive = isCaptureMode();
     const currentEditButton = titleContent?.querySelector?.('[data-pmm-snapshot-edit-stashed], .title-row .title-edit-btn[title="编辑预设名"]') || null;
-    const swappedEdits = DOC?.querySelectorAll?.('[data-pmm-snapshot-edit-stashed]') || [];
+    const swappedEdits = snapshotNodes('[data-pmm-snapshot-edit-stashed]');
     for (const button of swappedEdits) {
       if (!captureActive || button !== currentEditButton) restoreCaptureEditButton(button);
     }
-    const swappedNativeSaves = DOC?.querySelectorAll?.('[data-pmm-snapshot-native-save-stashed]') || [];
+    const swappedNativeSaves = snapshotNodes('[data-pmm-snapshot-native-save-stashed]');
     for (const button of swappedNativeSaves) {
       if (!captureActive || button !== nativeSaveButton()) restoreCaptureNativeSaveButton(button);
     }
@@ -15404,7 +15477,7 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
     desktopHomeContainer?.classList.add(DESKTOP_HOME_PANEL_CLASS);
     let button = host.querySelector(`.${TRIGGER_CLASS}`);
     if (!button) {
-      button = DOC.createElement('button');
+      button = host.ownerDocument.createElement('button');
       button.type = 'button';
       button.className = `title-action-btn ${TRIGGER_CLASS}`;
       button.dataset.pmmSnapshotTrigger = 'true';
@@ -15454,9 +15527,19 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
     else openOverlay();
   }
 
-  function installStyle() {
-    if (!DOC?.head || DOC.getElementById(STYLE_ID)) return;
-    const style = DOC.createElement('style');
+  function installDocumentClick(targetDocument) {
+    if (!targetDocument?.addEventListener || clickDocuments.has(targetDocument)) return;
+    targetDocument.addEventListener('click', handleDocumentClick, true);
+    clickDocuments.add(targetDocument);
+  }
+
+  function installStyle(targetDocument) {
+    if (!targetDocument?.head) return;
+    if (targetDocument.getElementById(STYLE_ID)) {
+      styledDocuments.add(targetDocument);
+      return;
+    }
+    const style = targetDocument.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
       .title-action-btn.${TRIGGER_CLASS}{display:flex!important}.title-edit-btn.pmm-switch-snapshot-capture-save,.title-action-btn.${TRIGGER_CLASS}.is-capture-mode{box-sizing:border-box!important;align-items:center!important;justify-content:center!important;padding:0!important;border:1px solid color-mix(in srgb,#10b981 55%,transparent)!important;border-radius:4px!important;background:color-mix(in srgb,#10b981 15%,transparent)!important;color:#10b981!important;opacity:1!important;box-shadow:none!important}.title-edit-btn.pmm-switch-snapshot-capture-save:hover,.title-action-btn.${TRIGGER_CLASS}.is-capture-mode:hover{background:color-mix(in srgb,#10b981 23%,transparent)!important;color:#10b981!important;opacity:1!important}.title-edit-btn.pmm-switch-snapshot-capture-save i,.title-action-btn.${TRIGGER_CLASS}.is-capture-mode i{color:#10b981!important}.header-right button.pmm-switch-snapshot-native-save-disabled,.header-right button.pmm-switch-snapshot-native-save-disabled:hover{pointer-events:auto!important;cursor:not-allowed!important;opacity:.48!important;filter:none!important;background:rgba(127,127,127,.07)!important;border-color:rgba(148,163,184,.18)!important;box-shadow:none!important;transform:none!important}.header-right button.pmm-switch-snapshot-native-save-disabled::before{display:none!important}.header-right button.pmm-switch-snapshot-native-save-disabled .card-icon{background:rgba(127,127,127,.13)!important;border-color:rgba(148,163,184,.18)!important}.header-right button.pmm-switch-snapshot-native-save-disabled .card-icon i{color:var(--pm-text-secondary,var(--SmartThemeBodyColor,#a1a1aa))!important;opacity:.72!important}#preset-manager-main-panel .pm-panel-container.pmm-switch-snapshot-capture-mode{outline:1px solid color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 78%,transparent)!important;outline-offset:2px!important;box-shadow:0 0 0 4px color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 13%,transparent)!important;border-radius:var(--pm-radius-lg,14px)!important}
@@ -15484,7 +15567,8 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
     style.textContent += `@media (min-width:769px){#preset-manager-main-panel .pm-panel-container.${DESKTOP_HOME_PANEL_CLASS}>.pm-main-wrapper{flex:0 0 620px!important;width:620px!important;min-width:620px!important;max-width:620px!important}#preset-manager-main-panel .pm-panel-container.${DESKTOP_HOME_PANEL_CLASS}>.pm-main-wrapper>.preset-panel{width:100%!important;min-width:0!important;max-width:100%!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .header-left.${DESKTOP_HOME_TITLE_HOST_CLASS}{flex:0 0 208px!important;width:208px!important;min-width:208px!important;max-width:208px!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .header-left.${DESKTOP_HOME_TITLE_HOST_CLASS} .title-card{width:100%!important;min-width:0!important;max-width:100%!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS}{min-width:0!important;width:100%!important;max-width:100%!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS}>.title-actions{margin-left:-30px!important;gap:6px!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS}>.title-actions>.title-action-btn{flex:0 0 auto!important;white-space:nowrap!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS}>.title-row>.title-edit-btn{display:flex!important;visibility:visible!important;flex:0 0 20px!important;width:20px!important;min-width:20px!important}.title-content.${CAPTURE_TITLE_CLASS} .title-actions>[title="保存开关"],.title-content.${CAPTURE_TITLE_CLASS} .title-actions>[title^="同步开关"]{display:none!important}.title-content.${CAPTURE_TITLE_CLASS} .title-actions>.title-edit-btn.pmm-switch-snapshot-capture-save{display:flex!important}}`;
     style.textContent += `@media (min-width:769px){/* 快照录制的取消与保存均放在标题卡片第二排中央，避免 Tauri 将取消按钮压成细条。 */#preset-manager-main-panel .pm-header .title-content.${CAPTURE_TITLE_CLASS}>.title-actions{display:flex!important;align-items:center!important;justify-content:center!important;width:100%!important;margin-left:0!important;gap:7px!important}#preset-manager-main-panel .pm-header .title-content.${CAPTURE_TITLE_CLASS}>.title-actions>.title-action-btn.${TRIGGER_CLASS}.is-capture-mode,#preset-manager-main-panel .pm-header .title-content.${CAPTURE_TITLE_CLASS}>.title-actions>.title-edit-btn.pmm-switch-snapshot-capture-save{display:flex!important;align-items:center!important;justify-content:center!important;box-sizing:border-box!important;flex:0 0 28px!important;width:28px!important;min-width:28px!important;max-width:28px!important;height:24px!important;min-height:24px!important;margin:0!important;padding:0!important;line-height:1!important}}`;
     style.textContent += `.pmm-switch-snapshot-dialog footer.pmm-switch-snapshot-footer{display:grid!important;gap:5px!important}.pmm-switch-snapshot-dialog footer.pmm-switch-snapshot-footer>span{display:block!important}.pmm-switch-snapshot-dialog footer.pmm-switch-snapshot-footer>span:first-child{font-weight:500!important;opacity:.82!important}.pmm-switch-snapshot-dialog footer.pmm-switch-snapshot-footer>span:last-child{font-size:9px!important;line-height:1.55!important;opacity:.78!important}`;
-    DOC.head.appendChild(style);
+    targetDocument.head.appendChild(style);
+    styledDocuments.add(targetDocument);
   }
 
   function scheduleMount() {
@@ -15564,6 +15648,8 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
     discoveryObserver = null;
     observedPanel = panel;
     observedPanelParent = panel.parentNode || null;
+    installStyle(panel.ownerDocument);
+    installDocumentClick(panel.ownerDocument);
     panelObserver = new TOP.MutationObserver(scheduleMount);
     panelObserver.observe(panel, { childList: true, subtree: true });
     if (observedPanelParent) {
@@ -15581,8 +15667,6 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
   function install() {
     const store = readStore();
     if (normalizeUniqueBindings(store)) writeStore(store);
-    installStyle();
-    DOC.addEventListener('click', handleDocumentClick, true);
     const panel = workshopPanel();
     if (panel) observeWorkshopPanel(panel);
     else startWorkshopDiscovery();
@@ -15597,8 +15681,13 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
       return snapshot ? { id:snapshot.id, name:snapshot.name, presetName:snapshot.presetName } : null;
     },
     cleanup() {
+      const cleanupDocuments = new Set(managedDocuments());
+      for (const currentDocument of styledDocuments) cleanupDocuments.add(currentDocument);
+      for (const currentDocument of clickDocuments) cleanupDocuments.add(currentDocument);
       disconnectWorkshopObservers();
-      DOC.removeEventListener('click', handleDocumentClick, true);
+      for (const currentDocument of clickDocuments) {
+        currentDocument.removeEventListener?.('click', handleDocumentClick, true);
+      }
       uninstallChatBindingListener();
       if (scheduled) {
         try { (TOP.cancelAnimationFrame || SELF.cancelAnimationFrame || TOP.clearTimeout)(scheduled); } catch (_) {}
@@ -15606,17 +15695,22 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
       }
       closeOverlay();
       captureMode = null;
-      DOC?.querySelectorAll?.(`.${TRIGGER_CLASS}`).forEach(button => button.remove());
-      DOC?.querySelectorAll?.(`.${HOME_TITLE_CLASS}`).forEach(node => node.classList.remove(HOME_TITLE_CLASS, CAPTURE_TITLE_CLASS));
-      DOC?.querySelectorAll?.(`.${DESKTOP_HOME_TITLE_HOST_CLASS}`).forEach(node => node.classList.remove(DESKTOP_HOME_TITLE_HOST_CLASS));
-      DOC?.querySelectorAll?.(`.${DESKTOP_HOME_PANEL_CLASS}`).forEach(node => node.classList.remove(DESKTOP_HOME_PANEL_CLASS));
-      DOC?.querySelectorAll?.('[data-pmm-snapshot-edit-stashed]').forEach(restoreCaptureEditButton);
-      DOC?.querySelectorAll?.('[data-pmm-snapshot-native-save-stashed]').forEach(restoreCaptureNativeSaveButton);
-      DOC?.querySelectorAll?.('.pmm-switch-snapshot-capture-mode').forEach(node => node.classList.remove('pmm-switch-snapshot-capture-mode'));
-      DOC?.getElementById?.(STYLE_ID)?.remove();
+      for (const currentDocument of cleanupDocuments) {
+        currentDocument.querySelectorAll?.(`.${TRIGGER_CLASS}`).forEach(button => button.remove());
+        currentDocument.querySelectorAll?.(`.${HOME_TITLE_CLASS}`).forEach(node => node.classList.remove(HOME_TITLE_CLASS, CAPTURE_TITLE_CLASS));
+        currentDocument.querySelectorAll?.(`.${DESKTOP_HOME_TITLE_HOST_CLASS}`).forEach(node => node.classList.remove(DESKTOP_HOME_TITLE_HOST_CLASS));
+        currentDocument.querySelectorAll?.(`.${DESKTOP_HOME_PANEL_CLASS}`).forEach(node => node.classList.remove(DESKTOP_HOME_PANEL_CLASS));
+        currentDocument.querySelectorAll?.('[data-pmm-snapshot-edit-stashed]').forEach(restoreCaptureEditButton);
+        currentDocument.querySelectorAll?.('[data-pmm-snapshot-native-save-stashed]').forEach(restoreCaptureNativeSaveButton);
+        currentDocument.querySelectorAll?.('.pmm-switch-snapshot-capture-mode').forEach(node => node.classList.remove('pmm-switch-snapshot-capture-mode'));
+        currentDocument.getElementById?.(STYLE_ID)?.remove();
+      }
+      styledDocuments.clear();
+      clickDocuments.clear();
+      overlayDocument = null;
       try { delete TOP[API_KEY]; } catch (_) {}
     },
   };
   install();
-  console.info('[预设工坊] Gecko v3.13 已加载：开关快照仅显示于主预设页面标题栏。');
+  console.info('[预设工坊] Gecko v3.14 已加载：开关快照仅显示于主预设页面标题栏，弹窗挂载真实页面。');
 })();

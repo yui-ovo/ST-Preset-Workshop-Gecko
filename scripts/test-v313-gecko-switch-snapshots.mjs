@@ -41,6 +41,30 @@ assert.ok(stateBuilder.includes('function makeGroupStates(presetName)'), '快照
 assert.ok(stateBuilder.includes('readGroupEnabledStates'), '快照没有读取原生柏宝箱分组状态');
 assert.ok(stateBuilder.includes('syncGroupEnabledStates'), '快照没有写回原生柏宝箱分组状态');
 
+const documentHosting = section('function visibleWorkshopDocument()', 'function isBranchMode()');
+assert.ok(documentHosting.includes('normalPresetContainer()'), 'Gecko 快照没有优先定位真实主预设容器');
+assert.ok(documentHosting.includes('container?.ownerDocument?.body'), 'Gecko 快照没有以主预设容器的 ownerDocument 作为宿主');
+assert.ok(documentHosting.includes("currentDocument.getElementById?.('preset-manager-main-panel')"), 'Gecko 快照没有在跨 frame 时回退到可见工坊文档');
+assert.ok(documentHosting.includes('return DOC?.body ? DOC : null'), 'Gecko 快照缺少后台文档的安全兜底');
+
+const overlayHosting = section('function ensureOverlay()', 'function openOverlay()');
+assert.ok(overlayHosting.includes('const targetDocument = visibleWorkshopDocument()'), '快照遮罩没有解析真实宿主文档');
+assert.ok(overlayHosting.includes('targetDocument.createElement'), '快照遮罩没有在真实宿主文档创建');
+assert.ok(overlayHosting.includes('targetDocument.body.appendChild(overlay)'), '快照遮罩没有挂到真实宿主文档 body');
+assert.ok(overlayHosting.includes('overlayDocument = targetDocument'), '快照遮罩没有记录其宿主文档');
+assert.ok(!overlayHosting.includes('DOC.body.appendChild(overlay)'), '快照遮罩仍可能被挂进后台 iframe');
+
+const stylesheet = section('function installStyle(targetDocument)', 'function scheduleMount()');
+assert.ok(stylesheet.includes('targetDocument.head.appendChild(style)'), '快照样式没有注入真实宿主文档');
+assert.ok(stylesheet.includes('styledDocuments.add(targetDocument)'), '快照样式宿主未被记录用于清理');
+
+const cleanupStart = snapshots.lastIndexOf('cleanup() {');
+const cleanup = snapshots.slice(cleanupStart);
+assert.ok(cleanupStart >= 0, '找不到 Gecko 快照清理逻辑');
+assert.ok(cleanup.includes('for (const currentDocument of clickDocuments)'), '快照点击监听没有按宿主文档清理');
+assert.ok(cleanup.includes('for (const currentDocument of cleanupDocuments)'), '快照样式与标题状态没有按宿主文档清理');
+assert.ok(!snapshots.includes("DOC.addEventListener('click', handleDocumentClick, true)"), '快照点击监听仍被固定在后台 iframe');
+
 const scope = section('function normalPresetContainer()', 'function normalTitleActions()');
 for (const excluded of [
   "currentDocument.getElementById('pmm-preset-regex-transfer-overlay')",
@@ -53,6 +77,8 @@ for (const excluded of [
 
 const trigger = section('function mountTrigger()', 'function handleDocumentClick(event)');
 assert.ok(trigger.includes('const actionsHost = normalTitleActions()'), '快照没有只挂到主预设标题栏');
+assert.ok(trigger.includes('const activeDocument = actionsHost?.ownerDocument || visibleWorkshopDocument()'), '快照标题没有跟随真实宿主文档');
+assert.ok(trigger.includes('button = host.ownerDocument.createElement'), '快照相机按钮没有在标题宿主文档创建');
 assert.ok(trigger.includes("const titleContent = actionsHost?.closest?.('.title-content') || null"), '快照没有定位主标题内容');
 assert.ok(trigger.includes('titleContent?.classList.add(HOME_TITLE_CLASS)'), '快照没有标记主页标题');
 assert.ok(trigger.includes('host.insertBefore(button, importButton)'), '快照没有放在主标题导入按钮之前');
@@ -111,4 +137,4 @@ for (const geckoRequired of [
 assert.ok(entry.includes('gecko-frame-scheduler.js'), 'Gecko 帧调度桥丢失');
 assert.ok(entry.includes('iframe.hidden = false'), 'Gecko 后台 iframe 兼容设置丢失');
 
-console.log('Gecko v3.1.13 开关快照通过：主页限定、手机标题让位、分组状态、绑定自动应用、桌面录制态与 Gecko 兼容补丁均已验证。');
+console.log('Gecko v3.1.14 开关快照通过：主页限定、宿主文档挂载、手机标题让位、分组状态、绑定自动应用、桌面录制态与 Gecko 兼容补丁均已验证。');
