@@ -8653,9 +8653,13 @@ async function ce(){
         ? `分组已同步 ${total} 条${suffix}`
         : `分组名称已同步 ${renameCount} 个${suffix}`;
 
+    const suppressSuccessMessage = API.__suppressNextSuccessMessage === true;
     const compactMessage = String(API.__nextSuccessMessage || '').trim();
+    if (suppressSuccessMessage) delete API.__suppressNextSuccessMessage;
     if (!hasGroupChanges) {
       /* 普通保存已有自己的成功提示；这里只负责让柏宝箱当前分组成员即时改名。 */
+      if (compactMessage) delete API.__nextSuccessMessage;
+    } else if (suppressSuccessMessage) {
       if (compactMessage) delete API.__nextSuccessMessage;
     } else if (compactMessage) {
       delete API.__nextSuccessMessage;
@@ -12247,6 +12251,22 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
   }
 
   async function applyBranchState(presetName,sectionGroupState,prompts=[]){
+    let snapshotApi=null;
+    try{snapshotApi=sharedRoot.__PMM_SWITCH_SNAPSHOTS_GECKO_V313__||localRoot.__PMM_SWITCH_SNAPSHOTS_GECKO_V313__}
+    catch(_){ }
+    const activeSnapshot=snapshotApi?.activeForPreset?.(presetName);
+    if(activeSnapshot){
+      /* 分支核心调用发生在条目草稿写入之后；先立刻还原主预设，再中止保存分支标记。 */
+      try{
+        const setter=sharedRoot.setPreset||localRoot.setPreset;
+        if(typeof setter==='function')await setter('in_use',{prompts:clone(promptsForPreset(presetName))})
+      }catch(error){console.warn('[预设工坊] 拦截分支时还原主预设失败:',error)}
+      const message=`当前正应用“${text(activeSnapshot.name)}”快照，请先恢复预设默认后再切换分支`;
+      try{toastr.warning(message)}catch(_){ }
+      const blocked=new Error(message);
+      blocked.code='PMM_SNAPSHOT_BRANCH_CONFLICT';
+      throw blocked
+    }
     if(!sectionGroupState||text(sectionGroupState.groupSource)!=='baibai'&&!sectionGroupState.sections?.some(section=>text(section?.id).startsWith('baibai_')))return false;
     const manager=getPresetManager();
     const existing=readNativeState(manager,presetName);
@@ -12307,6 +12327,7 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
   }
 
   async function syncGroupEnabledState({presetName='',sectionId='',enabled=true}={}){
+    if(compat.__suspendGroupPowerSync===true)return true;
     const resolvedPreset=resolveNativePresetName(presetName);
     const rawSectionId=text(sectionId);
     const groupId=rawSectionId.startsWith('baibai_')?rawSectionId.slice(7):rawSectionId;
@@ -12317,10 +12338,71 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
     const group=(state.groups||[]).find(item=>text(item?.id)===groupId);
     if(!group)return false;
     group.enabled=enabled!==false;
-    /* 仅排入当前分组以触发原生列表即时刷新；提示固定为一句，避免罗列全部分组。 */
-    compat.__nextSuccessMessage='分组开关已同步';
+    /* 快照录制时频繁拨动分组不弹提示；普通模式仍保留一句简短反馈。 */
+    let snapshotCaptureActive=false;
+    try{snapshotCaptureActive=!!sharedRoot.document?.querySelector?.('.pmm-switch-snapshot-capture-mode')}
+    catch(_){ }
+    if(snapshotCaptureActive)compat.__suppressNextSuccessMessage=true;
+    else compat.__nextSuccessMessage='分组开关已同步';
     try{return await writeNativeState(resolvedPreset,state,{onlyGroupId:groupId})}
-    finally{delete compat.__nextSuccessMessage}
+    finally{
+      delete compat.__nextSuccessMessage;
+      delete compat.__suppressNextSuccessMessage
+    }
+  }
+
+  function readGroupEnabledStates(presetName=''){
+    const resolvedPreset=resolveNativePresetName(presetName);
+    if(!resolvedPreset)return[];
+    const state=readNativeState(getPresetManager(),resolvedPreset);
+    if(!state)return[];
+    return (state.groups||[]).map(group=>({
+      id:text(group?.id),
+      name:text(group?.name??group?.title),
+      enabled:group?.enabled!==false,
+    })).filter(group=>group.id)
+  }
+
+  async function syncGroupEnabledStates({presetName='',states=[]}={}){
+    const resolvedPreset=resolveNativePresetName(presetName);
+    const requested=Array.isArray(states)?states.filter(state=>state&&typeof state==='object'):[];
+    if(!resolvedPreset||!requested.length)return{applied:0,changed:0,missing:requested.length};
+    const manager=getPresetManager();
+    const state=readNativeState(manager,resolvedPreset);
+    if(!state)return{applied:0,changed:0,missing:requested.length};
+
+    const requestedById=new Map(requested.filter(item=>text(item?.id)).map(item=>[text(item.id),item]));
+    const requestedNameCounts=new Map;
+    const currentNameCounts=new Map;
+    for(const item of requested){
+      const name=text(item?.name);
+      if(name)requestedNameCounts.set(name,(requestedNameCounts.get(name)||0)+1)
+    }
+    for(const group of state.groups||[]){
+      const name=text(group?.name??group?.title);
+      if(name)currentNameCounts.set(name,(currentNameCounts.get(name)||0)+1)
+    }
+    const uniqueRequestedByName=new Map(requested.filter(item=>{
+      const name=text(item?.name);
+      return name&&requestedNameCounts.get(name)===1
+    }).map(item=>[text(item.name),item]));
+
+    let applied=0;
+    let changed=0;
+    for(const group of state.groups||[]){
+      const groupId=text(group?.id);
+      const groupName=text(group?.name??group?.title);
+      const desired=requestedById.get(groupId)
+        ||(groupName&&currentNameCounts.get(groupName)===1?uniqueRequestedByName.get(groupName):null);
+      if(!desired)continue;
+      applied+=1;
+      const enabled=desired.enabled!==false;
+      if((group.enabled!==false)===enabled)continue;
+      group.enabled=enabled;
+      changed+=1
+    }
+    if(changed)await writeNativeState(resolvedPreset,state,{syncMembership:false});
+    return{applied,changed,missing:Math.max(0,requested.length-applied)}
   }
 
   Object.assign(compat,{
@@ -12337,6 +12419,8 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
     restoreMainState,
     syncEnabledStates,
     syncGroupEnabledState,
+    readGroupEnabledStates,
+    syncGroupEnabledStates,
     nativeStateFromSections,
   });
   try{sharedRoot.__PMM_BAIBAI_COMPAT__=compat}catch(_){ }
@@ -13603,3 +13687,1936 @@ html.${ROOT_CLASS} ${PANEL_SELECTOR} .${COMPACT_CLASS} > .prompt-editor__expand-
 })();
 
 console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持一键关闭顶部通知，并遵循酒馆通知时长。');
+
+/* ===== PMM_SWITCH_SNAPSHOTS_GECKO_V313：完整开关快照与预设默认（Gecko） ===== */
+;(() => {
+  'use strict';
+
+  const SELF = typeof window !== 'undefined' ? window : globalThis;
+  const TOP = (() => { try { return SELF.top || SELF; } catch (_) { return SELF; } })();
+  const DOC = (() => { try { return TOP.document || SELF.document; } catch (_) { return SELF.document; } })();
+  const API_KEY = '__PMM_SWITCH_SNAPSHOTS_GECKO_V313__';
+  const STYLE_ID = 'pmm-switch-snapshots-gecko-v313-style';
+  const OVERLAY_ID = 'pmm-switch-snapshots-test52-overlay';
+  const STORAGE_KEY = 'pmm.switch-snapshots.v1';
+  const TRIGGER_CLASS = 'pmm-switch-snapshot-trigger';
+  const HOME_TITLE_CLASS = 'pmm-switch-snapshot-home-title';
+  const CAPTURE_TITLE_CLASS = 'pmm-switch-snapshot-capture-title';
+  const DESKTOP_HOME_TITLE_HOST_CLASS = 'pmm-desktop-home-title-host';
+  const DESKTOP_HOME_PANEL_CLASS = 'pmm-desktop-home-panel-expanded';
+
+  try { TOP[API_KEY]?.cleanup?.(); } catch (_) {}
+  let discoveryObserver = null;
+  let panelObserver = null;
+  let panelParentObserver = null;
+  let observedPanel = null;
+  let observedPanelParent = null;
+  let scheduled = 0;
+  let composer = null;
+  let openMenuId = '';
+  let characterPicker = null;
+  let captureMode = null;
+  let chatEventSource = null;
+  let chatEventType = '';
+  let chatChangedHandler = null;
+  let autoApplyTimer = 0;
+  let autoApplySerial = 0;
+  let lastAutoContextKey = '';
+
+  const text = value => String(value ?? '').trim();
+  const clone = value => {
+    try { return structuredClone(value); }
+    catch (_) {
+      try { return JSON.parse(JSON.stringify(value)); }
+      catch (_) { return value; }
+    }
+  };
+  const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;',
+  }[char]));
+  const makeId = () => {
+    try {
+      const id = TOP.crypto?.randomUUID?.() || SELF.crypto?.randomUUID?.() || '';
+      if (id) return id;
+    } catch (_) {}
+    return `pmm-snapshot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  };
+
+  function notify(kind, message) {
+    /* 复用 Gecko 版既有的顶部通知开关；关闭时只写控制台。 */
+    if (typeof pmmTopNotificationsEnabled === 'function' && !pmmTopNotificationsEnabled()) {
+      const logger = kind === 'error' ? console.error : kind === 'warning' ? console.warn : (console.debug || console.info);
+      logger?.call(console, '[预设工坊·开关快照][顶部通知已关闭]', message);
+      return;
+    }
+    const host = TOP.toastr || SELF.toastr;
+    if (typeof host?.[kind] === 'function') host[kind](message);
+    else console[kind === 'error' ? 'error' : 'info'](`[预设工坊·开关快照] ${message}`);
+  }
+
+  function getContext() {
+    try { return TOP.SillyTavern?.getContext?.() || SELF.SillyTavern?.getContext?.() || null; }
+    catch (_) { return null; }
+  }
+
+  function getPresetManager() {
+    try {
+      const context = getContext();
+      return context?.getPresetManager?.('openai') || context?.getPresetManager?.() || null;
+    } catch (_) { return null; }
+  }
+
+  function currentDraftBridge() {
+    const panel = normalPresetContainer()?.querySelector?.('.preset-panel');
+    const bridge = panel?.__pmmBatchVariableBridge;
+    if (typeof bridge?.prompts !== 'function' || typeof bridge?.update !== 'function') return null;
+    return bridge;
+  }
+
+  function draftPrompts() {
+    try {
+      const prompts = currentDraftBridge()?.prompts?.();
+      return Array.isArray(prompts) ? clone(prompts) : [];
+    } catch (_) { return []; }
+  }
+
+  function workshopPresetName() {
+    const container = normalPresetContainer();
+    const select = container?.querySelector?.('.preset-panel .title-select, .title-select');
+    const selected = text(select?.value || select?.selectedOptions?.[0]?.textContent);
+    if (selected && selected !== 'in_use') return selected;
+
+    const input = container?.querySelector?.('.preset-panel .title-input, .title-input');
+    const editing = text(input?.value);
+    if (editing && editing !== 'in_use') return editing;
+
+    const label = container?.querySelector?.('.preset-panel .title-text, .title-text');
+    const displayed = text(label?.textContent);
+    return displayed && displayed !== 'in_use' ? displayed : '';
+  }
+
+  function currentPresetName() {
+    const workshopName = workshopPresetName();
+    if (workshopName) return workshopName;
+    try {
+      const name = text(getPresetManager()?.getSelectedPresetName?.());
+      if (name && name !== 'in_use') return name;
+    } catch (_) {}
+    try {
+      const name = text((TOP.getLoadedPresetName || SELF.getLoadedPresetName)?.());
+      if (name && name !== 'in_use') return name;
+    } catch (_) {}
+    return '';
+  }
+
+  function getPrompts(presetName) {
+    if (!isBranchMode() && text(presetName) === currentPresetName()) {
+      const prompts = draftPrompts();
+      if (prompts.length) return prompts;
+    }
+    for (const source of [TOP, SELF]) {
+      try {
+        const prompts = source?.getPreset?.(presetName)?.prompts;
+        if (Array.isArray(prompts)) return clone(prompts);
+      } catch (_) {}
+    }
+    try {
+      const context = getContext();
+      const selected = text(getPresetManager()?.getSelectedPresetName?.());
+      if (!selected || selected === presetName) {
+        const prompts = context?.chatCompletionSettings?.prompts;
+        if (Array.isArray(prompts)) return clone(prompts);
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  function workshopDocuments() {
+    const result = [];
+    const seenWindows = new Set();
+    const seenDocuments = new Set();
+    const visit = currentWindow => {
+      if (!currentWindow || seenWindows.has(currentWindow)) return;
+      seenWindows.add(currentWindow);
+      let currentDocument = null;
+      try { currentDocument = currentWindow.document; } catch (_) {}
+      if (currentDocument && !seenDocuments.has(currentDocument)) {
+        seenDocuments.add(currentDocument);
+        result.push(currentDocument);
+      }
+      try {
+        for (let index = 0; index < Number(currentWindow.frames?.length || 0); index += 1) {
+          visit(currentWindow.frames[index]);
+        }
+      } catch (_) {}
+      try {
+        if (currentWindow.parent && currentWindow.parent !== currentWindow) visit(currentWindow.parent);
+      } catch (_) {}
+    };
+    visit(SELF);
+    visit(TOP);
+    return result;
+  }
+
+  function isBranchMode() {
+    return workshopDocuments().some(currentDocument =>
+      currentDocument.querySelector?.('#preset-manager-main-panel .pm-panel-container--branch-mode')
+    );
+  }
+
+  function activeBranchName(presetName = currentPresetName()) {
+    const requestedPreset = text(presetName);
+    try {
+      const getter = TOP.getVariables || SELF.getVariables;
+      const variables = typeof getter === 'function' ? getter({ type:'global' }) : null;
+      const branchName = text(variables?.pm_v2_settings?.bookmarks?.[requestedPreset]);
+      if (branchName) return branchName;
+    } catch (_) {}
+    return '';
+  }
+
+  function blockWhileBranchActive(actionLabel = '使用开关快照') {
+    const branchName = activeBranchName();
+    if (!branchName) return false;
+    notify('warning', `当前正在使用“${branchName}”分支，请先切回默认分支后再${actionLabel}`);
+    return true;
+  }
+
+  function currentCharacter() {
+    const context = getContext() || {};
+    const rawId = context.characterId ?? context.this_chid ?? TOP.this_chid ?? SELF.this_chid;
+    const characters = context.characters || TOP.characters || SELF.characters || [];
+    let character = null;
+    try {
+      character = Array.isArray(characters)
+        ? characters[Number(rawId)]
+        : characters?.[rawId];
+    } catch (_) {}
+    const name = text(character?.name || context.characterName || TOP.name2 || SELF.name2);
+    const key = text(character?.avatar || character?.id || rawId);
+    return name && key ? { key, name } : null;
+  }
+
+  function availableCharacters() {
+    const context = getContext() || {};
+    const source = context.characters || TOP.characters || SELF.characters || [];
+    const entries = Array.isArray(source)
+      ? source.map((character, index) => [String(index), character])
+      : Object.entries(source || {});
+    const seen = new Set();
+    return entries.reduce((characters, [rawKey, character]) => {
+      const name = text(character?.name);
+      const key = text(character?.avatar || character?.id || rawKey);
+      if (!name || !key || seen.has(key)) return characters;
+      seen.add(key);
+      characters.push({ key, name });
+      return characters;
+    }, []).sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'));
+  }
+
+  function currentChat() {
+    const context = getContext() || {};
+    const chatId = text(context.chatId ?? context.chat_id ?? TOP.chat_id ?? SELF.chat_id);
+    if (!chatId) return null;
+    const groupId = text(context.groupId ?? context.group_id ?? TOP.selected_group ?? SELF.selected_group);
+    const character = currentCharacter();
+    const scope = groupId ? `group:${groupId}` : character ? `character:${character.key}` : 'chat';
+    const name = text(context.chatName ?? context.chat_name ?? context.chatMetadata?.name ?? chatId);
+    return { key: `${scope}::${chatId}`, name: name || chatId };
+  }
+
+  function loadedPresetName() {
+    try {
+      const name = text((TOP.getLoadedPresetName || SELF.getLoadedPresetName)?.());
+      if (name && name !== 'in_use') return name;
+    } catch (_) {}
+    try {
+      const name = text(getPresetManager()?.getSelectedPresetName?.());
+      if (name && name !== 'in_use') return name;
+    } catch (_) {}
+    return currentPresetName();
+  }
+
+  function readStore() {
+    try {
+      const raw = TOP.localStorage?.getItem(STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && Array.isArray(parsed.snapshots)) {
+        return {
+          version: 1,
+          activeSnapshots: parsed.activeSnapshots && typeof parsed.activeSnapshots === 'object'
+            ? { ...parsed.activeSnapshots }
+            : {},
+          snapshots: parsed.snapshots
+            .filter(snapshot => snapshot && typeof snapshot === 'object' && Array.isArray(snapshot.states))
+            .map(snapshot => ({
+              ...snapshot,
+              characters: bindingList(snapshot.characters, snapshot.character),
+              chats: bindingList(snapshot.chats, snapshot.chat),
+              states: snapshot.states.map(state => ({ ...state })),
+              ...(Array.isArray(snapshot.groupStates)
+                ? { groupStates: snapshot.groupStates.map(state => ({ ...state })) }
+                : {}),
+            })),
+        };
+      }
+    } catch (error) {
+      console.warn('[预设工坊·开关快照] 读取失败', error);
+    }
+    return { version: 1, activeSnapshots: {}, snapshots: [] };
+  }
+
+  function bindingList(value, legacyValue = null) {
+    const source = Array.isArray(value)
+      ? value
+      : legacyValue && typeof legacyValue === 'object' ? [legacyValue] : [];
+    const seen = new Set();
+    return source.reduce((items, binding) => {
+      const key = text(binding?.key);
+      if (!key || seen.has(key)) return items;
+      seen.add(key);
+      items.push({ key, name: text(binding?.name) || key });
+      return items;
+    }, []);
+  }
+
+
+  function writeStore(store) {
+    try {
+      TOP.localStorage?.setItem(STORAGE_KEY, JSON.stringify({
+        version: 1,
+        activeSnapshots: store.activeSnapshots && typeof store.activeSnapshots === 'object' ? store.activeSnapshots : {},
+        snapshots: store.snapshots,
+      }));
+      syncChatBindingListener(store);
+      return true;
+    } catch (error) {
+      console.error('[预设工坊·开关快照] 保存失败', error);
+      notify('error', '快照保存失败：浏览器本地存储不可用');
+      return false;
+    }
+  }
+
+  function normalizeUniqueBindings(store) {
+    const snapshots = Array.isArray(store?.snapshots) ? store.snapshots : [];
+    let changed = false;
+    for (const snapshot of snapshots) {
+      const characters = bindingList(snapshot.characters, snapshot.character);
+      const chats = bindingList(snapshot.chats, snapshot.chat);
+      if (Object.prototype.hasOwnProperty.call(snapshot, 'character')) {
+        delete snapshot.character;
+        changed = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(snapshot, 'chat')) {
+        delete snapshot.chat;
+        changed = true;
+      }
+      if (isDefaultSnapshot(snapshot)) {
+        if (characters.length || chats.length) changed = true;
+        snapshot.characters = [];
+        snapshot.chats = [];
+      } else {
+        if (JSON.stringify(snapshot.characters || []) !== JSON.stringify(characters)) changed = true;
+        if (JSON.stringify(snapshot.chats || []) !== JSON.stringify(chats)) changed = true;
+        snapshot.characters = characters;
+        snapshot.chats = chats;
+      }
+    }
+    const ordered = snapshots
+      .filter(snapshot => !isDefaultSnapshot(snapshot))
+      .sort((left, right) => Number(right.updatedAt || right.createdAt || 0) - Number(left.updatedAt || left.createdAt || 0));
+    const characterOwners = new Set();
+    const chatOwners = new Set();
+    for (const snapshot of ordered) {
+      const presetName = text(snapshot.presetName);
+      const characters = snapshot.characters.filter(binding => {
+        const ownerKey = `${presetName}\u0000${binding.key}`;
+        if (!presetName || characterOwners.has(ownerKey)) {
+          changed = true;
+          return false;
+        }
+        characterOwners.add(ownerKey);
+        return true;
+      });
+      const chats = snapshot.chats.filter(binding => {
+        const ownerKey = `${presetName}\u0000${binding.key}`;
+        if (!presetName || chatOwners.has(ownerKey)) {
+          changed = true;
+          return false;
+        }
+        chatOwners.add(ownerKey);
+        return true;
+      });
+      if (characters.length !== snapshot.characters.length) snapshot.characters = characters;
+      if (chats.length !== snapshot.chats.length) snapshot.chats = chats;
+    }
+    return changed;
+  }
+
+  function makeStates(prompts) {
+    return prompts
+      .filter(prompt => prompt && typeof prompt === 'object')
+      .map(prompt => ({
+        id: text(prompt.id),
+        name: text(prompt.name || prompt.id),
+        enabled: prompt.enabled === true,
+      }));
+  }
+
+  function baiBaiCompat() {
+    try { return TOP.__PMM_BAIBAI_COMPAT__ || SELF.__PMM_BAIBAI_COMPAT__ || null; }
+    catch (_) { return null; }
+  }
+
+  function sectionGroupStore() {
+    const root = DOC?.querySelector?.('#preset-manager-main-panel');
+    const app = root?.__vue_app__;
+    const provides = app?._context?.provides || root?.__vueParentComponent?.appContext?.provides;
+    if (!provides) return null;
+    for (const key of Reflect.ownKeys(provides)) {
+      const candidate = provides[key];
+      if (!(candidate?._s instanceof Map)) continue;
+      const direct = candidate._s.get('sectionGroup');
+      if (direct?.getPanelState && direct?.toggleSectionDisabled) return direct;
+      for (const store of candidate._s.values()) {
+        if (store?.getPanelState && store?.toggleSectionDisabled) return store;
+      }
+    }
+    return null;
+  }
+
+  function workshopGroupStates(presetName) {
+    const store = sectionGroupStore();
+    let panelState = null;
+    try { panelState = store?.getPanelState?.(presetName) || null; }
+    catch (_) {}
+    const sections = Array.isArray(panelState?.sections) ? panelState.sections : [];
+    const disabled = new Set(panelState?.disabledSections || []);
+    return sections
+      .filter(section => text(section?.id).startsWith('baibai_'))
+      .map(section => ({
+        id: text(section.id).slice('baibai_'.length),
+        sectionId: text(section.id),
+        name: text(section.displayName),
+        enabled: !disabled.has(text(section.id)),
+      }))
+      .filter(group => group.id);
+  }
+
+  function makeGroupStates(presetName) {
+    const workshop = workshopGroupStates(presetName);
+    if (workshop.length) return workshop.map(({ id, name, enabled }) => ({ id, name, enabled }));
+    try {
+      const native = baiBaiCompat()?.readGroupEnabledStates?.(presetName);
+      return Array.isArray(native)
+        ? native.map(group => ({ id: text(group?.id), name: text(group?.name), enabled: group?.enabled !== false })).filter(group => group.id)
+        : [];
+    } catch (_) { return []; }
+  }
+
+  function matchGroupStates(currentStates, savedStates) {
+    const requested = Array.isArray(savedStates) ? savedStates.filter(state => state && typeof state === 'object') : [];
+    const requestedById = new Map(requested.filter(state => text(state.id)).map(state => [text(state.id), state]));
+    const requestedNameCounts = new Map();
+    const currentNameCounts = new Map();
+    for (const state of requested) {
+      const name = text(state.name);
+      if (name) requestedNameCounts.set(name, (requestedNameCounts.get(name) || 0) + 1);
+    }
+    for (const state of currentStates) {
+      const name = text(state.name);
+      if (name) currentNameCounts.set(name, (currentNameCounts.get(name) || 0) + 1);
+    }
+    const uniqueRequestedByName = new Map(requested
+      .filter(state => text(state.name) && requestedNameCounts.get(text(state.name)) === 1)
+      .map(state => [text(state.name), state]));
+    return currentStates.map(current => {
+      const name = text(current.name);
+      const saved = requestedById.get(text(current.id))
+        || (name && currentNameCounts.get(name) === 1 ? uniqueRequestedByName.get(name) : null);
+      return saved ? { current, saved } : null;
+    }).filter(Boolean);
+  }
+
+  async function applyGroupSnapshotStates(presetName, savedStates) {
+    if (!Array.isArray(savedStates)) return { supported: false, applied: 0, changed: 0, missing: 0 };
+    const requested = savedStates.filter(state => state && typeof state === 'object');
+    if (!requested.length) return { supported: true, applied: 0, changed: 0, missing: 0 };
+
+    const compat = baiBaiCompat();
+    const store = sectionGroupStore();
+    const workshop = workshopGroupStates(presetName);
+    const matches = matchGroupStates(workshop, requested);
+    let workshopChanged = 0;
+    const previousSuspend = compat?.__suspendGroupPowerSync === true;
+    if (store && matches.length) {
+      if (compat) compat.__suspendGroupPowerSync = true;
+      try {
+        for (const { current, saved } of matches) {
+          const enabled = saved.enabled !== false;
+          if (current.enabled === enabled) continue;
+          await store.toggleSectionDisabled(current.sectionId, null, presetName);
+          workshopChanged += 1;
+        }
+      } finally {
+        if (compat) {
+          if (previousSuspend) compat.__suspendGroupPowerSync = true;
+          else delete compat.__suspendGroupPowerSync;
+        }
+      }
+    }
+
+    let nativeResult = null;
+    if (typeof compat?.syncGroupEnabledStates === 'function') {
+      nativeResult = await compat.syncGroupEnabledStates({ presetName, states: requested });
+    }
+    const applied = Math.max(matches.length, Number(nativeResult?.applied) || 0);
+    const changed = Math.max(workshopChanged, Number(nativeResult?.changed) || 0);
+    return {
+      supported: true,
+      applied,
+      changed,
+      missing: Math.max(0, requested.length - applied),
+    };
+  }
+
+  function defaultSnapshotName() {
+    const character = currentCharacter();
+    return character ? `${character.name} 开关` : `${currentPresetName() || '当前预设'} 开关`;
+  }
+
+  function isDefaultSnapshot(snapshot) {
+    return snapshot?.isDefault === true || snapshot?.kind === 'default';
+  }
+
+  function defaultSnapshotForCurrentPreset() {
+    const presetName = currentPresetName();
+    return readStore().snapshots.find(snapshot => (
+      text(snapshot.presetName) === presetName && isDefaultSnapshot(snapshot)
+    )) || null;
+  }
+
+  function snapshotsForCurrentPreset() {
+    const presetName = currentPresetName();
+    const character = currentCharacter();
+    const chat = currentChat();
+    return readStore().snapshots
+      .filter(snapshot => text(snapshot.presetName) === presetName && !isDefaultSnapshot(snapshot))
+      .sort((left, right) => {
+        const leftCurrent = chat && left.chats.some(binding => binding.key === chat.key)
+          ? 2
+          : character && left.characters.some(binding => binding.key === character.key) ? 1 : 0;
+        const rightCurrent = chat && right.chats.some(binding => binding.key === chat.key)
+          ? 2
+          : character && right.characters.some(binding => binding.key === character.key) ? 1 : 0;
+        return rightCurrent - leftCurrent || Number(right.updatedAt || right.createdAt || 0) - Number(left.updatedAt || left.createdAt || 0);
+      });
+  }
+
+  function activeSnapshotForPreset(presetName, store = readStore()) {
+    const id = text(store.activeSnapshots?.[text(presetName)]);
+    if (!id) return null;
+    return store.snapshots.find(snapshot => (
+      snapshot.id === id
+      && text(snapshot.presetName) === text(presetName)
+      && !isDefaultSnapshot(snapshot)
+    )) || null;
+  }
+
+  function activeSnapshotForCurrentPreset() {
+    return activeSnapshotForPreset(currentPresetName());
+  }
+
+  function setActiveSnapshot(presetName, snapshotId = '') {
+    const name = text(presetName);
+    if (!name) return false;
+    const store = readStore();
+    store.activeSnapshots = store.activeSnapshots && typeof store.activeSnapshots === 'object'
+      ? { ...store.activeSnapshots }
+      : {};
+    if (snapshotId) store.activeSnapshots[name] = text(snapshotId);
+    else delete store.activeSnapshots[name];
+    return writeStore(store);
+  }
+
+  function blockWhileSnapshotActive(actionLabel) {
+    const active = activeSnapshotForCurrentPreset();
+    if (!active) return false;
+    notify('warning', `当前正应用“${active.name}”快照，请先恢复预设默认后再${actionLabel}`);
+    return true;
+  }
+
+  function saveDefaultSnapshot() {
+    const options = arguments[0] && typeof arguments[0] === 'object' ? arguments[0] : {};
+    if (blockWhileBranchActive('保存预设默认')) return false;
+    if (blockWhileSnapshotActive('更新预设默认')) return false;
+    const presetName = currentPresetName();
+    const prompts = getPrompts(presetName);
+    if (!presetName || !prompts.length) {
+      notify('warning', '没有可保存的预设条目');
+      return false;
+    }
+    const now = Date.now();
+    const groupStates = makeGroupStates(presetName);
+    const store = readStore();
+    const existing = store.snapshots.find(snapshot => (
+      text(snapshot.presetName) === presetName && isDefaultSnapshot(snapshot)
+    ));
+    if (existing) {
+      existing.name = '预设默认';
+      existing.kind = 'default';
+      existing.isDefault = true;
+      existing.characters = [];
+      existing.chats = [];
+      delete existing.character;
+      delete existing.chat;
+      existing.states = makeStates(prompts);
+      existing.groupStates = groupStates;
+      existing.updatedAt = now;
+    } else {
+      store.snapshots.unshift({
+        id: makeId(),
+        name: '预设默认',
+        kind: 'default',
+        isDefault: true,
+        presetName,
+        states: makeStates(prompts),
+
+        groupStates,
+        characters: [],
+        chats: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    if (writeStore(store)) {
+      openMenuId = '';
+      if (!options.silent) notify('success', existing ? '已更新预设默认的开关' : '已保存预设默认的开关');
+      renderOverlay();
+      return true;
+    }
+    return false;
+  }
+
+  function saveNewSnapshot(inputName, afterSave = null, promptsOverride = null) {
+    if (blockWhileBranchActive('新建快照')) return false;
+    if (blockWhileSnapshotActive('新建快照')) return false;
+    const presetName = currentPresetName();
+    const prompts = Array.isArray(promptsOverride) ? clone(promptsOverride) : getPrompts(presetName);
+    if (!presetName || !prompts.length) {
+      notify('warning', '没有可保存的预设条目');
+      return;
+    }
+    const name = text(inputName);
+    if (!name) return;
+    const now = Date.now();
+    const groupStates = makeGroupStates(presetName);
+    const store = readStore();
+    store.snapshots.unshift({
+      id: makeId(),
+      name,
+      presetName,
+      states: makeStates(prompts),
+      groupStates,
+      characters: [],
+      chats: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (writeStore(store)) {
+      composer = null;
+      openMenuId = '';
+      notify('success', `已保存快照“${name}”`);
+      if (typeof afterSave === 'function') afterSave();
+      else renderOverlay();
+      return true;
+    }
+    return false;
+  }
+
+  function findSnapshot(id) {
+    return readStore().snapshots.find(snapshot => snapshot.id === id) || null;
+  }
+
+  function mergeSnapshotStates(prompts, states) {
+    const statesById = new Map(states.filter(state => text(state.id)).map(state => [text(state.id), state]));
+    const stateNameCounts = new Map();
+    const promptNameCounts = new Map();
+    for (const state of states) stateNameCounts.set(text(state.name), (stateNameCounts.get(text(state.name)) || 0) + 1);
+    for (const prompt of prompts) promptNameCounts.set(text(prompt.name || prompt.id), (promptNameCounts.get(text(prompt.name || prompt.id)) || 0) + 1);
+    const uniqueStatesByName = new Map(states
+      .filter(state => stateNameCounts.get(text(state.name)) === 1)
+      .map(state => [text(state.name), state]));
+
+    let applied = 0;
+    let changed = 0;
+    const nextPrompts = prompts.map(prompt => {
+      const id = text(prompt.id);
+      const name = text(prompt.name || prompt.id);
+      const state = statesById.get(id)
+        || (promptNameCounts.get(name) === 1 ? uniqueStatesByName.get(name) : null);
+      if (!state) return prompt;
+      applied += 1;
+      if (prompt.enabled === state.enabled) return prompt;
+      changed += 1;
+      return { ...prompt, enabled: state.enabled };
+    });
+    return { nextPrompts, applied, changed };
+  }
+
+  async function settleDraft() {
+    await Promise.resolve();
+    await new Promise(resolve => (TOP.requestAnimationFrame || SELF.requestAnimationFrame || (callback => TOP.setTimeout(callback, 16)))(resolve));
+  }
+
+  async function writeSwitchesToDraft(nextPrompts, label = '', recordUndo = true) {
+    const bridge = currentDraftBridge();
+    if (!bridge) return false;
+    const current = draftPrompts();
+    const nextById = new Map(nextPrompts.map(prompt => [text(prompt.id), prompt]));
+    const changes = current.filter(prompt => {
+      const next = nextById.get(text(prompt.id));
+      return next && prompt.enabled !== next.enabled;
+    });
+    if (!changes.length) return true;
+    if (recordUndo && label) bridge.record?.(label);
+    for (const prompt of changes) {
+      const next = nextById.get(text(prompt.id));
+      bridge.update(prompt.id, { enabled: next.enabled });
+    }
+    await settleDraft();
+    return true;
+  }
+
+  async function persistPromptsDirectly(presetName, prompts) {
+    const setPreset = TOP.setPreset || SELF.setPreset;
+    if (typeof setPreset !== 'function') throw new Error('未找到 setPreset');
+    await setPreset(presetName, { prompts: clone(prompts) });
+    const loaded = text((TOP.getLoadedPresetName || SELF.getLoadedPresetName)?.());
+    if (loaded === presetName) await setPreset('in_use', { prompts: clone(prompts) });
+    const context = getContext();
+    const eventType = context?.eventTypes?.PRESET_CHANGED || context?.event_types?.PRESET_CHANGED;
+    if (eventType && typeof context?.eventSource?.emit === 'function') {
+      await context.eventSource.emit(eventType, { apiId: 'openai', name: presetName });
+    }
+  }
+
+  async function saveAppliedDraft(presetName, prompts, draftUpdated) {
+    if (draftUpdated) {
+      const button = nativeSaveButton();
+      if (button && !button.disabled && !button.dataset.pmmSnapshotNativeSaveDisabled) {
+        button.click();
+        await new Promise(resolve => TOP.setTimeout(resolve, 520));
+        const loaded = text((TOP.getLoadedPresetName || SELF.getLoadedPresetName)?.());
+        const setPreset = TOP.setPreset || SELF.setPreset;
+        if (loaded === presetName && typeof setPreset === 'function') {
+          await setPreset('in_use', { prompts: clone(prompts) });
+        }
+        return true;
+      }
+    }
+    await persistPromptsDirectly(presetName, prompts);
+    return false;
+  }
+
+  async function applySnapshot(id) {
+    const options = arguments[1] && typeof arguments[1] === 'object' ? arguments[1] : {};
+    if (isBranchMode()) {
+      notify('warning', '开关快照只应用到主预设；请先退出分支模式');
+      return false;
+    }
+    if (blockWhileBranchActive('应用快照')) return false;
+    const snapshot = findSnapshot(id);
+    const presetName = text(options.presetName) || currentPresetName();
+    if (!snapshot || text(snapshot.presetName) !== presetName) {
+      notify('warning', '该快照不属于当前预设');
+      return false;
+    }
+    const prompts = getPrompts(presetName);
+    if (!prompts.length) {
+      notify('warning', '当前预设没有可应用的条目');
+      return false;
+    }
+
+    const { nextPrompts, applied, changed } = mergeSnapshotStates(prompts, snapshot.states);
+    const hasSavedGroups = Array.isArray(snapshot.groupStates) && snapshot.groupStates.length > 0;
+
+    if (!applied && !hasSavedGroups) {
+      notify('warning', '没有能与当前预设对应的快照条目');
+      return false;
+    }
+
+    try {
+      const canUpdateCurrentDraft = presetName === currentPresetName();
+      const draftUpdated = changed > 0 && canUpdateCurrentDraft
+        ? await writeSwitchesToDraft(nextPrompts, `应用开关快照：${snapshot.name}`, false)
+        : canUpdateCurrentDraft && !!currentDraftBridge();
+      const notifiedByNativeSave = changed > 0
+        ? await saveAppliedDraft(presetName, nextPrompts, draftUpdated)
+        : false;
+      const groupResult = await applyGroupSnapshotStates(presetName, snapshot.groupStates);
+
+      if (!applied && !groupResult.applied) {
+        notify('warning', '没有能与当前预设对应的快照开关');
+        return false;
+      }
+
+      if (!options.silent && !notifiedByNativeSave) {
+        const message = isDefaultSnapshot(snapshot)
+          ? '已恢复预设默认'
+          : options.automatic
+            ? `已自动应用快照“${snapshot.name}”`
+            : `已应用快照“${snapshot.name}”`;
+        notify('success', message);
+      }
+      setActiveSnapshot(presetName, isDefaultSnapshot(snapshot) ? '' : snapshot.id);
+      renderOverlay();
+      return true;
+    } catch (error) {
+      console.error('[预设工坊·开关快照] 应用失败', error);
+      notify('error', '应用快照失败');
+      return false;
+    }
+  }
+
+  function renameSnapshot(id) {
+    const store = readStore();
+    const snapshot = store.snapshots.find(item => item.id === id);
+    if (!snapshot) return;
+    const name = text(TOP.prompt?.('快照名称', snapshot.name));
+    if (!name || name === snapshot.name) return;
+    snapshot.name = name;
+    snapshot.updatedAt = Date.now();
+    if (writeStore(store)) {
+      notify('success', '快照已重命名');
+      renderOverlay();
+    }
+  }
+
+  function overwriteSnapshot(id) {
+    if (isBranchMode()) {
+      notify('warning', '开关快照只记录主预设；请先退出分支模式');
+      return;
+    }
+    if (blockWhileBranchActive('覆盖快照')) return;
+    if (blockWhileSnapshotActive('覆盖快照')) return;
+    const store = readStore();
+    const snapshot = store.snapshots.find(item => item.id === id);
+    const presetName = currentPresetName();
+    const prompts = getPrompts(presetName);
+    if (!snapshot || text(snapshot.presetName) !== presetName || !prompts.length) return;
+    snapshot.states = makeStates(prompts);
+    snapshot.groupStates = makeGroupStates(presetName);
+    snapshot.updatedAt = Date.now();
+    if (writeStore(store)) {
+      notify('success', `已覆盖快照“${snapshot.name}”`);
+      renderOverlay();
+    }
+  }
+
+  function bindSnapshotToCurrentCharacter(id) {
+    const character = currentCharacter();
+    const chat = currentChat();
+    if (!character || !chat) {
+      notify('warning', '请先进入角色聊天');
+      return;
+    }
+    const store = readStore();
+    const snapshot = store.snapshots.find(item => item.id === id);
+    if (!snapshot || isDefaultSnapshot(snapshot)) return;
+    const isBoundHere = snapshot.characters.some(binding => binding.key === character.key);
+    if (isBoundHere) {
+      snapshot.characters = snapshot.characters.filter(binding => binding.key !== character.key);
+    } else {
+      for (const item of store.snapshots) {
+        if (isDefaultSnapshot(item) || text(item.presetName) !== text(snapshot.presetName)) continue;
+        item.characters = bindingList(item.characters).filter(binding => binding.key !== character.key);
+      }
+      snapshot.characters.push({ ...character });
+    }
+    snapshot.updatedAt = Date.now();
+    if (writeStore(store)) {
+      notify('success', isBoundHere ? '已解除当前角色绑定' : '已绑定当前角色');
+      renderOverlay();
+    }
+  }
+
+  function bindSnapshotToCurrentChat(id) {
+    const character = currentCharacter();
+    const chat = currentChat();
+    if (!character || !chat) {
+      notify('warning', '请先进入角色聊天');
+      return;
+    }
+    const store = readStore();
+    const snapshot = store.snapshots.find(item => item.id === id);
+    if (!snapshot || isDefaultSnapshot(snapshot)) return;
+    const isBoundHere = snapshot.chats.some(binding => binding.key === chat.key);
+    if (isBoundHere) {
+      snapshot.chats = snapshot.chats.filter(binding => binding.key !== chat.key);
+    } else {
+      for (const item of store.snapshots) {
+        if (isDefaultSnapshot(item) || text(item.presetName) !== text(snapshot.presetName)) continue;
+        item.chats = bindingList(item.chats).filter(binding => binding.key !== chat.key);
+      }
+      snapshot.chats.push({ ...chat });
+    }
+    snapshot.updatedAt = Date.now();
+    if (writeStore(store)) {
+      notify('success', isBoundHere ? '已解除当前聊天绑定' : '已绑定当前聊天');
+      renderOverlay();
+    }
+  }
+
+  function openCharacterPicker(id) {
+    const snapshot = findSnapshot(id);
+    if (!snapshot || isDefaultSnapshot(snapshot)) return;
+    const characters = availableCharacters();
+    const knownKeys = new Set(characters.map(character => character.key));
+    for (const binding of snapshot.characters) {
+      if (knownKeys.has(binding.key)) continue;
+      knownKeys.add(binding.key);
+      characters.push({ ...binding });
+    }
+    if (!characters.length) {
+      notify('warning', '没有可选择的角色');
+      return;
+    }
+
+    characters.sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'));
+    characterPicker = {
+      snapshotId: snapshot.id,
+      query: '',
+      characters,
+      selectedKeys: new Set(snapshot.characters.map(binding => binding.key)),
+    };
+    openMenuId = '';
+    renderOverlay();
+  }
+
+  function closeCharacterPicker() {
+    characterPicker = null;
+    renderOverlay();
+  }
+
+  function characterPickerOptionsMarkup() {
+    if (!characterPicker) return '';
+    const store = readStore();
+    const target = store.snapshots.find(snapshot => snapshot.id === characterPicker.snapshotId);
+    if (!target) return '<div class="pmm-switch-character-picker-empty">快照已不存在</div>';
+    const query = text(characterPicker.query).toLocaleLowerCase();
+    const visible = characterPicker.characters.filter(character => (
+      !query
+      || character.name.toLocaleLowerCase().includes(query)
+      || character.key.toLocaleLowerCase().includes(query)
+    ));
+    if (!visible.length) return '<div class="pmm-switch-character-picker-empty">没有找到角色</div>';
+    return visible.map(character => {
+      const selected = characterPicker.selectedKeys.has(character.key);
+      const owner = store.snapshots.find(snapshot => (
+        snapshot.id !== target.id
+        && text(snapshot.presetName) === text(target.presetName)
+        && !isDefaultSnapshot(snapshot)
+        && snapshot.characters.some(binding => binding.key === character.key)
+      ));
+      return `<button type="button" class="pmm-switch-character-picker-option${selected ? ' is-selected' : ''}" data-pmm-snapshot-action="toggle-character-choice" data-pmm-character-key="${escapeHtml(character.key)}" aria-pressed="${selected ? 'true' : 'false'}">
+        <i class="fa-solid ${selected ? 'fa-square-check' : 'fa-square'}"></i>
+        <span><strong>${escapeHtml(character.name)}</strong>${owner ? `<small>当前绑定：${escapeHtml(owner.name)}</small>` : ''}</span>
+      </button>`;
+    }).join('');
+  }
+
+  function renderCharacterPickerOptions(overlay) {
+    if (!characterPicker) return;
+    const list = overlay?.querySelector?.('[data-pmm-character-picker-list]');
+    if (list) list.innerHTML = characterPickerOptionsMarkup();
+    const count = overlay?.querySelector?.('[data-pmm-character-picker-count]');
+    if (count) count.textContent = `已选 ${characterPicker.selectedKeys.size} 个`;
+  }
+
+  function toggleCharacterPickerChoice(key, overlay) {
+    if (!characterPicker || !key) return;
+    if (characterPicker.selectedKeys.has(key)) characterPicker.selectedKeys.delete(key);
+    else characterPicker.selectedKeys.add(key);
+    renderCharacterPickerOptions(overlay);
+  }
+
+  function saveCharacterPicker() {
+    if (!characterPicker) return false;
+    const store = readStore();
+    const snapshot = store.snapshots.find(item => item.id === characterPicker.snapshotId);
+    if (!snapshot || isDefaultSnapshot(snapshot)) {
+      characterPicker = null;
+      renderOverlay();
+      return false;
+    }
+    const selectedKeys = new Set(characterPicker.selectedKeys);
+    for (const item of store.snapshots) {
+      if (item.id === snapshot.id || isDefaultSnapshot(item) || text(item.presetName) !== text(snapshot.presetName)) continue;
+      item.characters = bindingList(item.characters).filter(binding => !selectedKeys.has(binding.key));
+    }
+    snapshot.characters = characterPicker.characters
+      .filter(character => selectedKeys.has(character.key))
+      .map(character => ({ ...character }));
+    snapshot.updatedAt = Date.now();
+    if (!writeStore(store)) return false;
+    characterPicker = null;
+    notify('success', '已更新角色绑定');
+    renderOverlay();
+    return true;
+  }
+
+  function clearSnapshotCharacterBindings(id) {
+    const store = readStore();
+    const snapshot = store.snapshots.find(item => item.id === id);
+    if (!snapshot || isDefaultSnapshot(snapshot) || !snapshot.characters.length) return false;
+    snapshot.characters = [];
+    snapshot.updatedAt = Date.now();
+    if (!writeStore(store)) return false;
+    openMenuId = '';
+    notify('success', '已取消全部角色绑定');
+    renderOverlay();
+    return true;
+  }
+
+  function boundSnapshotForContext(presetName, store = readStore()) {
+    const character = currentCharacter();
+    const chat = currentChat();
+    const snapshots = store.snapshots
+      .filter(snapshot => text(snapshot.presetName) === text(presetName) && !isDefaultSnapshot(snapshot))
+      .sort((left, right) => Number(right.updatedAt || right.createdAt || 0) - Number(left.updatedAt || left.createdAt || 0));
+    if (chat) {
+      const chatSnapshot = snapshots.find(snapshot => snapshot.chats.some(binding => binding.key === chat.key));
+      if (chatSnapshot) return { snapshot: chatSnapshot, source: 'chat', character, chat };
+    }
+    if (character) {
+      const characterSnapshot = snapshots.find(snapshot => snapshot.characters.some(binding => binding.key === character.key));
+      if (characterSnapshot) return { snapshot: characterSnapshot, source: 'character', character, chat };
+    }
+    return { snapshot: null, source: '', character, chat };
+  }
+
+  async function autoApplyBoundSnapshot() {
+    const serial = ++autoApplySerial;
+    if (isCaptureMode() || isBranchMode() || activeBranchName()) return false;
+    const presetName = loadedPresetName();
+    if (!presetName) return false;
+    const binding = boundSnapshotForContext(presetName);
+    const contextKey = `${presetName}\u0000${binding.chat?.key || ''}\u0000${binding.character?.key || ''}`;
+    if (contextKey === lastAutoContextKey) return false;
+    lastAutoContextKey = contextKey;
+    if (!binding.snapshot || serial !== autoApplySerial) return false;
+    const applied = await applySnapshot(binding.snapshot.id, { presetName, automatic: true });
+    if (!applied && lastAutoContextKey === contextKey) lastAutoContextKey = '';
+    return applied;
+  }
+
+  function scheduleBoundSnapshotAutoApply(delay = 140) {
+    if (autoApplyTimer) TOP.clearTimeout(autoApplyTimer);
+    autoApplyTimer = TOP.setTimeout(() => {
+      autoApplyTimer = 0;
+      void autoApplyBoundSnapshot();
+    }, delay);
+  }
+
+  function hasAnySnapshotBindings(store = readStore()) {
+    return (Array.isArray(store?.snapshots) ? store.snapshots : []).some(snapshot =>
+      !isDefaultSnapshot(snapshot)
+      && ((Array.isArray(snapshot.characters) && snapshot.characters.length > 0)
+        || (Array.isArray(snapshot.chats) && snapshot.chats.length > 0))
+    );
+  }
+
+  function uninstallChatBindingListener() {
+    if (chatEventSource && chatEventType && chatChangedHandler) {
+      try {
+        if (typeof chatEventSource.off === 'function') chatEventSource.off(chatEventType, chatChangedHandler);
+        else chatEventSource.removeListener?.(chatEventType, chatChangedHandler);
+      } catch (_) {}
+    }
+    chatEventSource = null;
+    chatEventType = '';
+    chatChangedHandler = null;
+    if (autoApplyTimer) TOP.clearTimeout(autoApplyTimer);
+    autoApplyTimer = 0;
+    autoApplySerial += 1;
+    lastAutoContextKey = '';
+  }
+
+  function installChatBindingListener(scheduleCurrent = false) {
+    if (chatEventSource && chatEventType && chatChangedHandler) {
+      if (scheduleCurrent) scheduleBoundSnapshotAutoApply(260);
+      return true;
+    }
+    const context = getContext();
+    const eventSource = context?.eventSource;
+    const eventType = context?.eventTypes?.CHAT_CHANGED || context?.event_types?.CHAT_CHANGED;
+    if (!eventSource || !eventType || typeof eventSource.on !== 'function') return false;
+    chatEventSource = eventSource;
+    chatEventType = eventType;
+    chatChangedHandler = () => scheduleBoundSnapshotAutoApply();
+    eventSource.on(eventType, chatChangedHandler);
+    if (scheduleCurrent) scheduleBoundSnapshotAutoApply(260);
+    return true;
+  }
+
+  function syncChatBindingListener(store = readStore(), scheduleCurrent = false) {
+    if (!hasAnySnapshotBindings(store)) {
+      uninstallChatBindingListener();
+      return false;
+    }
+    return installChatBindingListener(scheduleCurrent);
+  }
+
+  function deleteSnapshot(id) {
+    const store = readStore();
+    const snapshot = store.snapshots.find(item => item.id === id);
+    if (!snapshot) return;
+    const active = activeSnapshotForPreset(snapshot.presetName, store);
+    if (active?.id === snapshot.id) {
+      notify('warning', `当前正应用“${snapshot.name}”快照，请先恢复预设默认后再删除`);
+      return;
+    }
+    store.snapshots = store.snapshots.filter(item => item.id !== id);
+    if (writeStore(store)) {
+      notify('success', `已删除“${snapshot.name}”`);
+      renderOverlay();
+    }
+  }
+
+  async function resetSnapshotsForCurrentPreset() {
+    if (isBranchMode()) {
+      notify('warning', '开关快照只记录主预设；请先退出分支模式');
+      return false;
+    }
+    if (blockWhileBranchActive('重置快照')) return false;
+    const presetName = currentPresetName();
+    const store = readStore();
+    const presetSnapshots = store.snapshots.filter(snapshot => text(snapshot.presetName) === presetName);
+    const defaultSnapshot = presetSnapshots.find(isDefaultSnapshot);
+    if (!presetName || !defaultSnapshot) return false;
+
+    const roleCount = presetSnapshots.filter(snapshot => !isDefaultSnapshot(snapshot)).length;
+    const activeSnapshot = activeSnapshotForPreset(presetName, store);
+    const activeWarning = activeSnapshot
+      ? `\n\n当前正应用“${activeSnapshot.name}”，会先恢复预设默认再清空。`
+      : '';
+    const confirmed = TOP.confirm?.(
+      `确定重置“${presetName}”的开关快照吗？\n\n将删除预设默认和 ${roleCount} 个角色快照，删除后不可撤销。${activeWarning}`,
+    );
+    if (!confirmed) return false;
+
+    if (activeSnapshot) {
+      await applySnapshot(defaultSnapshot.id, { silent: true });
+      if (activeSnapshotForPreset(presetName)) {
+        notify('error', '恢复预设默认失败，未删除任何快照');
+        return false;
+      }
+    }
+
+    const latestStore = readStore();
+    latestStore.snapshots = latestStore.snapshots.filter(snapshot => text(snapshot.presetName) !== presetName);
+    latestStore.activeSnapshots = latestStore.activeSnapshots && typeof latestStore.activeSnapshots === 'object'
+      ? { ...latestStore.activeSnapshots }
+      : {};
+    delete latestStore.activeSnapshots[presetName];
+    if (!writeStore(latestStore)) {
+      notify('error', '重置开关快照失败');
+      return false;
+    }
+
+    composer = null;
+    openMenuId = '';
+    renderFirstDefaultPrompt();
+    notify('success', `已重置“${presetName}”的全部开关快照`);
+    return true;
+  }
+
+  function formatSavedAt(timestamp) {
+    const date = new Date(Number(timestamp) || Date.now());
+    try { return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+    catch (_) { return date.toLocaleString(); }
+  }
+
+  function closeOverlay() {
+    composer = null;
+    openMenuId = '';
+    characterPicker = null;
+    DOC?.getElementById?.(OVERLAY_ID)?.remove();
+  }
+
+  function openComposer() {
+    composer = { name: defaultSnapshotName() };
+    openMenuId = '';
+    renderOverlay();
+  }
+
+  function closeComposer() {
+    composer = null;
+    renderOverlay();
+  }
+
+  function isCaptureMode() {
+    if (!captureMode) return false;
+    const activePresetName = currentPresetName();
+    if (!activePresetName && !isBranchMode() && !activeBranchName(captureMode.presetName)) return true;
+    const samePreset = text(captureMode.presetName) === activePresetName;
+    if (samePreset && !isBranchMode() && !activeBranchName(activePresetName)) return true;
+    captureMode = null;
+    return false;
+  }
+
+  function syncCaptureModeUI() {
+    const active = isCaptureMode();
+    const container = normalPresetContainer();
+    for (const node of DOC?.querySelectorAll?.('.pmm-switch-snapshot-capture-mode') || []) {
+      if (node !== container) node.classList.remove('pmm-switch-snapshot-capture-mode');
+    }
+    if (container && container.classList.contains('pmm-switch-snapshot-capture-mode') !== active) {
+      container.classList.toggle('pmm-switch-snapshot-capture-mode', active);
+    }
+  }
+
+  async function exitCaptureMode(showNotice = false) {
+    const session = captureMode;
+    if (!session || session.restoring) return;
+    session.restoring = true;
+    closeOverlay();
+    try {
+
+      const current = getPrompts(session.presetName);
+      const { nextPrompts } = mergeSnapshotStates(current, session.entryStates || []);
+      const restored = await writeSwitchesToDraft(nextPrompts, '', false);
+      await applyGroupSnapshotStates(session.presetName, session.entryGroupStates);
+      if (!restored) notify('warning', '没有找到当前工坊草稿，开关未能自动还原');
+    } finally {
+      captureMode = null;
+      syncCaptureModeUI();
+      scheduleMount();
+    }
+    if (showNotice) notify('info', '已取消快照');
+  }
+
+  function enterCaptureMode() {
+    const presetName = currentPresetName();
+    if (blockWhileBranchActive('新建快照')) return;
+    if (blockWhileSnapshotActive('新建快照')) return;
+    if (!presetName || !defaultSnapshotForCurrentPreset()) {
+      notify('warning', '请先保存预设默认');
+      return;
+    }
+    const prompts = getPrompts(presetName);
+    if (!prompts.length) {
+      notify('warning', '当前工坊没有可记录的预设条目');
+      return;
+    }
+    captureMode = { presetName, entryStates: makeStates(prompts), restoring: false };
+    captureMode.entryGroupStates = makeGroupStates(presetName);
+    composer = null;
+    openMenuId = '';
+    closeOverlay();
+    syncCaptureModeUI();
+    scheduleMount();
+    notify('info', '已进入快照模式');
+  }
+
+  async function enterCaptureModeFromOverlay() {
+    /* 快照仅可从主预设页面标题栏启动，不跨页面跳转。 */
+    if (!normalPresetContainer()) {
+      notify('warning', '请先回到主预设页面后新建快照');
+      return;
+    }
+    enterCaptureMode();
+  }
+
+  function renderCaptureSavePrompt() {
+    const existing = DOC?.getElementById?.(OVERLAY_ID);
+    if (!existing) return;
+    const presetName = currentPresetName();
+    existing.innerHTML = `<section class="pmm-switch-snapshot-dialog pmm-switch-snapshot-save-capture-dialog" role="dialog" aria-modal="true" aria-label="保存快照">
+      <header class="pmm-switch-snapshot-head">
+        <div><h2><i class="fa-solid fa-floppy-disk"></i>保存快照</h2><p>${escapeHtml(presetName || '未选择预设')}</p></div>
+        <button type="button" class="pmm-switch-snapshot-close" data-pmm-snapshot-action="return-capture" title="返回快照模式"><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <div class="pmm-switch-snapshot-save-capture">
+        <label for="pmm-switch-snapshot-name">保存为</label>
+        <input id="pmm-switch-snapshot-name" data-pmm-snapshot-name type="text" maxlength="80" autocomplete="off" value="${escapeHtml(composer?.name || defaultSnapshotName())}" placeholder="例如：悟·日常">
+        <p>会保存当前全部条目开关与柏宝箱分组开关；保存后退出快照模式。</p>
+        <div class="pmm-switch-snapshot-save-capture-actions"><button type="button" data-pmm-snapshot-action="return-capture">取消</button><button type="button" data-pmm-snapshot-action="save-capture"><i class="fa-solid fa-floppy-disk"></i>保存快照</button></div>
+      </div>
+    </section>`;
+    const focus = TOP.requestAnimationFrame || SELF.requestAnimationFrame || (callback => TOP.setTimeout(callback, 0));
+    focus(() => existing.querySelector('[data-pmm-snapshot-name]')?.focus());
+  }
+
+  function openCaptureSavePrompt() {
+    if (!isCaptureMode()) {
+      openOverlay();
+      return;
+    }
+    composer = { name: defaultSnapshotName() };
+    openMenuId = '';
+    ensureOverlay();
+    renderCaptureSavePrompt();
+  }
+
+  async function finishCaptureSnapshot() {
+    if (!isCaptureMode()) return false;
+    const prompts = getPrompts(captureMode.presetName);
+    const saved = saveNewSnapshot(composer?.name, null, prompts);
+    if (!saved) return false;
+    await exitCaptureMode(false);
+    openOverlay();
+    return true;
+  }
+
+  function renderFirstDefaultPrompt() {
+    const existing = DOC?.getElementById?.(OVERLAY_ID);
+    if (!existing) return;
+    const presetName = currentPresetName();
+    existing.innerHTML = `<section class="pmm-switch-snapshot-dialog pmm-switch-snapshot-first-default-dialog" role="dialog" aria-modal="true" aria-label="保存预设默认">
+      <header class="pmm-switch-snapshot-head">
+        <div><h2><i class="fa-solid fa-camera"></i>开关快照</h2><p>${escapeHtml(presetName || '未选择预设')}</p></div>
+        <button type="button" class="pmm-switch-snapshot-close" data-pmm-snapshot-action="close" title="关闭"><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <div class="pmm-switch-snapshot-first-default">
+        <i class="fa-solid fa-house pmm-switch-snapshot-first-default-icon"></i>
+        <h3>保存当前预设为默认？</h3>
+        <p>会冻结当前全部条目开关与柏宝箱分组开关，以后可一键恢复；不会修改预设内容。</p>
+        <div class="pmm-switch-snapshot-first-default-actions"><button type="button" data-pmm-snapshot-action="cancel-default-onboarding">取消</button><button type="button" data-pmm-snapshot-action="save-default-and-enter"><i class="fa-solid fa-bookmark"></i>保存并进入</button></div>
+      </div>
+    </section>`;
+  }
+
+  function positionOpenSnapshotMenu(overlay) {
+    const menu = overlay?.querySelector?.('.pmm-switch-snapshot-menu');
+    const trigger = menu?.parentElement?.querySelector?.('[data-pmm-snapshot-action="menu"]');
+    const dialog = overlay?.querySelector?.('.pmm-switch-snapshot-dialog');
+    if (!menu || !trigger || !dialog) return;
+
+    menu.style.setProperty('position', 'fixed', 'important');
+    menu.style.setProperty('left', '-10000px', 'important');
+    menu.style.setProperty('top', '0px', 'important');
+    menu.style.setProperty('right', 'auto', 'important');
+    menu.style.setProperty('bottom', 'auto', 'important');
+    overlay.appendChild(menu);
+
+    const schedule = TOP.requestAnimationFrame || SELF.requestAnimationFrame || (callback => TOP.setTimeout(callback, 0));
+    schedule(() => {
+      if (!menu.isConnected || !trigger.isConnected || !dialog.isConnected) return;
+      const triggerRect = trigger.getBoundingClientRect();
+      const dialogRect = dialog.getBoundingClientRect();
+      const footerRect = dialog.querySelector('footer')?.getBoundingClientRect?.();
+      const menuRect = menu.getBoundingClientRect();
+      const menuWidth = Math.max(142, menuRect.width);
+      const menuHeight = Math.max(1, menu.scrollHeight || menuRect.height);
+      const gap = 6;
+      const margin = 8;
+      const lowerEdge = footerRect?.top || dialogRect.bottom;
+      const roomBelow = lowerEdge - triggerRect.bottom - gap;
+      const roomAbove = triggerRect.top - dialogRect.top - gap;
+      const opensAbove = roomBelow < menuHeight && roomAbove > roomBelow;
+      const preferredTop = opensAbove
+        ? triggerRect.top - menuHeight - gap
+        : triggerRect.bottom + gap;
+      const maxTop = Math.max(dialogRect.top + margin, lowerEdge - menuHeight - margin);
+      const top = Math.max(dialogRect.top + margin, Math.min(preferredTop, maxTop));
+      const left = Math.max(
+        dialogRect.left + margin,
+        Math.min(triggerRect.right - menuWidth, dialogRect.right - menuWidth - margin),
+      );
+
+      menu.style.setProperty('left', `${Math.round(left)}px`, 'important');
+      menu.style.setProperty('top', `${Math.round(top)}px`, 'important');
+      menu.style.setProperty('z-index', '5', 'important');
+      menu.dataset.pmmSnapshotMenuDirection = opensAbove ? 'up' : 'down';
+      menu.classList.remove('pmm-switch-snapshot-menu--pending');
+    });
+  }
+
+  function dismissOpenSnapshotMenu(overlay) {
+    if (!openMenuId) return false;
+    openMenuId = '';
+    overlay?.querySelector?.('.pmm-switch-snapshot-menu')?.remove();
+    return true;
+  }
+
+  function renderOverlay() {
+    const existing = DOC?.getElementById?.(OVERLAY_ID);
+    if (!existing) return;
+    const presetName = currentPresetName();
+    const character = currentCharacter();
+    const chat = currentChat();
+    const bindingContextReady = !!(character && chat);
+    const defaultSnapshot = defaultSnapshotForCurrentPreset();
+    const snapshots = snapshotsForCurrentPreset();
+    const activeSnapshot = activeSnapshotForCurrentPreset();
+    const composerGroupCount = composer ? makeGroupStates(presetName).length : 0;
+    const rows = snapshots.length ? snapshots.map(snapshot => {
+      const groupCount = Array.isArray(snapshot.groupStates) ? snapshot.groupStates.length : 0;
+      const isActive = activeSnapshot?.id === snapshot.id;
+      const isCurrentCharacter = !!(character && snapshot.characters.some(binding => binding.key === character.key));
+      const isCurrentChat = !!(chat && snapshot.chats.some(binding => binding.key === chat.key));
+      const characterNames = snapshot.characters.map(binding => binding.name).join('、');
+      const disabledBinding = bindingContextReady ? '' : ' disabled';
+      const bindingHint = bindingContextReady ? '' : '请先进入角色聊天';
+      const characterNamesMarkup = characterNames ? `<div class="pmm-switch-snapshot-character-names" title="已绑定角色：${escapeHtml(characterNames)}"><i class="fa-solid fa-users"></i><span>${escapeHtml(characterNames)}</span></div>` : '';
+      const menu = openMenuId === snapshot.id ? `<div class="pmm-switch-snapshot-menu pmm-switch-snapshot-menu--pending">
+        <button type="button" data-pmm-snapshot-action="rename" data-pmm-snapshot-id="${escapeHtml(snapshot.id)}"><i class="fa-solid fa-pen"></i>重命名</button>
+        <button type="button" data-pmm-snapshot-action="overwrite" data-pmm-snapshot-id="${escapeHtml(snapshot.id)}"><i class="fa-solid fa-rotate"></i>覆盖为当前开关</button>
+        <button type="button" data-pmm-snapshot-action="manage-characters" data-pmm-snapshot-id="${escapeHtml(snapshot.id)}"><i class="fa-solid fa-users"></i>多选角色绑定</button>
+        <button type="button" class="pmm-switch-snapshot-clear-characters" data-pmm-snapshot-action="clear-character-bindings" data-pmm-snapshot-id="${escapeHtml(snapshot.id)}"${snapshot.characters.length ? '' : ' disabled'}><i class="fa-solid fa-user-slash"></i>取消全部角色绑定</button>
+        <button type="button" data-pmm-snapshot-action="delete" data-pmm-snapshot-id="${escapeHtml(snapshot.id)}"><i class="fa-solid fa-trash"></i>删除</button>
+      </div>` : '';
+      return `<article class="pmm-switch-snapshot-row${isActive ? ' is-active' : ''}" data-pmm-snapshot-id="${escapeHtml(snapshot.id)}">
+        <div class="pmm-switch-snapshot-copy">
+          <div class="pmm-switch-snapshot-name">${escapeHtml(snapshot.name)}</div>
+          <div class="pmm-switch-snapshot-meta">${snapshot.states.length} 条${groupCount ? ` · ${groupCount} 分组` : ''} · ${escapeHtml(formatSavedAt(snapshot.updatedAt || snapshot.createdAt))}</div>
+        </div>
+        <div class="pmm-switch-snapshot-bindings">
+          <div class="pmm-switch-snapshot-locks">
+            <button type="button" class="pmm-switch-snapshot-lock is-character${isCurrentCharacter ? ' is-bound' : ''}" data-pmm-snapshot-action="toggle-character-binding" data-pmm-snapshot-id="${escapeHtml(snapshot.id)}" title="${escapeHtml(bindingHint || (isCurrentCharacter ? '解除当前角色绑定' : '绑定当前角色'))}"${disabledBinding}><i class="fa-solid ${isCurrentCharacter ? 'fa-lock' : 'fa-lock-open'}"></i><span>角色</span></button>
+            <button type="button" class="pmm-switch-snapshot-lock is-chat${isCurrentChat ? ' is-bound' : ''}" data-pmm-snapshot-action="toggle-chat-binding" data-pmm-snapshot-id="${escapeHtml(snapshot.id)}" title="${escapeHtml(bindingHint || (isCurrentChat ? '解除当前聊天绑定' : '绑定当前聊天'))}"${disabledBinding}><i class="fa-solid ${isCurrentChat ? 'fa-lock' : 'fa-lock-open'}"></i><span>聊天</span></button>
+          </div>
+        </div>
+        <div class="pmm-switch-snapshot-actions">
+          <button type="button" data-pmm-snapshot-action="apply" data-pmm-snapshot-id="${escapeHtml(snapshot.id)}"${isActive ? ' class="is-current" disabled title="当前正在应用"' : ''}>${isActive ? '当前' : '应用'}</button>
+          <div class="pmm-switch-snapshot-menu-wrap">
+            <button type="button" class="pmm-switch-snapshot-more" data-pmm-snapshot-action="menu" data-pmm-snapshot-id="${escapeHtml(snapshot.id)}" title="更多操作"><i class="fa-solid fa-ellipsis"></i></button>
+            ${menu}
+          </div>
+        </div>
+        ${characterNamesMarkup}
+      </article>`;
+    }).join('') : `<div class="pmm-switch-snapshot-empty"><i class="fa-solid fa-camera"></i><span>当前还没有角色/聊天开关快照</span></div>`;
+    const defaultMarkup = defaultSnapshot ? `<section class="pmm-switch-snapshot-default is-saved">
+      <div class="pmm-switch-snapshot-default-copy"><div><i class="fa-solid fa-house"></i>预设默认</div><small>${defaultSnapshot.states.length} 条${Array.isArray(defaultSnapshot.groupStates) && defaultSnapshot.groupStates.length ? ` · ${defaultSnapshot.groupStates.length} 分组` : ''} · ${escapeHtml(formatSavedAt(defaultSnapshot.updatedAt || defaultSnapshot.createdAt))}</small></div>
+      <div class="pmm-switch-snapshot-default-actions"><button type="button" data-pmm-snapshot-action="apply-default" data-pmm-snapshot-id="${escapeHtml(defaultSnapshot.id)}"><i class="fa-solid fa-rotate-left"></i>恢复默认</button><button type="button" data-pmm-snapshot-action="update-default" title="${activeSnapshot ? '请先恢复预设默认' : '用当前开关更新默认'}"${activeSnapshot ? ' disabled' : ''}><i class="fa-solid fa-rotate"></i>更新默认</button><button type="button" class="pmm-switch-snapshot-reset-all" data-pmm-snapshot-action="reset-all" title="重置全部开关快照" aria-label="重置全部开关快照"><i class="fa-solid fa-trash"></i></button></div>
+    </section>` : `<section class="pmm-switch-snapshot-default is-empty">
+      <div class="pmm-switch-snapshot-default-copy"><div><i class="fa-solid fa-house"></i>还没有预设默认</div><small>请先保存当前原始开关；以后可一键恢复。</small></div>
+      <button type="button" data-pmm-snapshot-action="save-default"><i class="fa-solid fa-bookmark"></i>保存当前为默认</button>
+    </section>`;
+    const composerMarkup = composer ? `<div class="pmm-switch-snapshot-composer">
+      <label for="pmm-switch-snapshot-name">快照名称</label>
+      <input id="pmm-switch-snapshot-name" data-pmm-snapshot-name type="text" maxlength="80" autocomplete="off" value="${escapeHtml(composer.name)}" placeholder="例如：悟·日常">
+      <p>会冻结当前 ${getPrompts(presetName).length} 个条目开关${composerGroupCount ? `及 ${composerGroupCount} 个柏宝箱分组开关` : ''}。</p>
+      <div class="pmm-switch-snapshot-composer-actions"><button type="button" data-pmm-snapshot-action="cancel-create">取消</button><button type="button" data-pmm-snapshot-action="create"><i class="fa-solid fa-camera"></i>保存快照</button></div>
+    </div>` : `<div class="pmm-switch-snapshot-create"><button type="button" data-pmm-snapshot-action="new"><i class="fa-solid fa-plus"></i>新建开关快照</button></div>`;
+    const pickerSnapshot = characterPicker
+      ? snapshots.find(snapshot => snapshot.id === characterPicker.snapshotId)
+      : null;
+    const characterPickerMarkup = pickerSnapshot ? `<div class="pmm-switch-character-picker-layer">
+      <button type="button" class="pmm-switch-character-picker-backdrop" data-pmm-snapshot-action="cancel-character-picker" aria-label="关闭多选角色绑定"></button>
+      <section class="pmm-switch-character-picker" role="dialog" aria-modal="true" aria-label="多选角色绑定">
+        <header><div><h3><i class="fa-solid fa-users"></i>多选角色绑定</h3><small>${escapeHtml(pickerSnapshot.name)}</small></div><button type="button" data-pmm-snapshot-action="cancel-character-picker" title="关闭"><i class="fa-solid fa-xmark"></i></button></header>
+        <label class="pmm-switch-character-picker-search"><i class="fa-solid fa-magnifying-glass"></i><input type="search" data-pmm-character-search autocomplete="off" value="${escapeHtml(characterPicker.query)}" placeholder="搜索角色名字"></label>
+        <div class="pmm-switch-character-picker-list" data-pmm-character-picker-list>${characterPickerOptionsMarkup()}</div>
+        <div class="pmm-switch-character-picker-actions"><span data-pmm-character-picker-count>已选 ${characterPicker.selectedKeys.size} 个</span><button type="button" data-pmm-snapshot-action="cancel-character-picker">取消</button><button type="button" data-pmm-snapshot-action="save-character-picker"><i class="fa-solid fa-check"></i>保存</button></div>
+      </section>
+    </div>` : '';
+
+    existing.innerHTML = `<section class="pmm-switch-snapshot-dialog" role="dialog" aria-modal="true" aria-label="开关快照">
+      <header class="pmm-switch-snapshot-head">
+        <div><h2><i class="fa-solid fa-camera"></i>开关快照</h2><p>${escapeHtml(presetName || '未选择预设')}${character ? ` · 当前角色：${escapeHtml(character.name)}` : ''}</p></div>
+        <button type="button" class="pmm-switch-snapshot-close" data-pmm-snapshot-action="close" title="关闭"><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      ${defaultMarkup}
+      ${composerMarkup}
+      <div class="pmm-switch-snapshot-list">${rows}</div>
+      <footer class="pmm-switch-snapshot-footer"><span>快照保存条目开关与柏宝箱分组开关。</span><span>角色锁绑定当前角色，聊天锁绑定当前聊天；可通过「…」批量绑定多个角色；进入已绑定的角色或聊天时，会自动应用该快照。</span></footer>
+      ${characterPickerMarkup}
+    </section>`;
+    if (openMenuId) positionOpenSnapshotMenu(existing);
+    if (composer) {
+      const focus = TOP.requestAnimationFrame || SELF.requestAnimationFrame || (callback => TOP.setTimeout(callback, 0));
+      focus(() => existing.querySelector('[data-pmm-snapshot-name]')?.focus());
+    } else if (characterPicker) {
+      const focus = TOP.requestAnimationFrame || SELF.requestAnimationFrame || (callback => TOP.setTimeout(callback, 0));
+      focus(() => existing.querySelector('[data-pmm-character-search]')?.focus());
+    }
+  }
+
+  function ensureOverlay() {
+    let overlay = DOC?.getElementById?.(OVERLAY_ID);
+    if (!overlay) {
+      overlay = DOC.createElement('div');
+      overlay.id = OVERLAY_ID;
+      overlay.className = 'pmm-switch-snapshot-overlay';
+      overlay.addEventListener('click', event => {
+        if (event.target === overlay) closeOverlay();
+      });
+      overlay.addEventListener('click', event => {
+        const button = event.target?.closest?.('[data-pmm-snapshot-action]');
+        if (!button) {
+          if (openMenuId && !event.target?.closest?.('.pmm-switch-snapshot-menu')) {
+            dismissOpenSnapshotMenu(overlay);
+          }
+          return;
+        }
+        event.preventDefault();
+        const action = button.dataset.pmmSnapshotAction;
+        const id = text(button.dataset.pmmSnapshotId);
+        if (action !== 'menu') dismissOpenSnapshotMenu(overlay);
+        if (action === 'close') closeOverlay();
+        else if (action === 'new') void enterCaptureModeFromOverlay();
+        else if (action === 'cancel-create') closeComposer();
+        else if (action === 'create') saveNewSnapshot(composer?.name);
+        else if (action === 'save-capture') void finishCaptureSnapshot();
+        else if (action === 'return-capture') closeOverlay();
+        else if (action === 'save-default' || action === 'update-default') saveDefaultSnapshot();
+        else if (action === 'save-default-and-enter') {
+          if (saveDefaultSnapshot({ silent: true })) void enterCaptureModeFromOverlay();
+
+        }
+        else if (action === 'cancel-default-onboarding') closeOverlay();
+        else if (action === 'apply-default') void applySnapshot(id);
+        else if (action === 'reset-all') void resetSnapshotsForCurrentPreset();
+        else if (action === 'menu') {
+          openMenuId = openMenuId === id ? '' : id;
+          renderOverlay();
+        }
+        else if (action === 'apply') void applySnapshot(id);
+        else if (action === 'rename') renameSnapshot(id);
+        else if (action === 'overwrite') overwriteSnapshot(id);
+        else if (action === 'manage-characters') openCharacterPicker(id);
+        else if (action === 'clear-character-bindings') clearSnapshotCharacterBindings(id);
+        else if (action === 'toggle-character-binding') bindSnapshotToCurrentCharacter(id);
+        else if (action === 'toggle-chat-binding') bindSnapshotToCurrentChat(id);
+        else if (action === 'toggle-character-choice') toggleCharacterPickerChoice(text(button.dataset.pmmCharacterKey), overlay);
+        else if (action === 'cancel-character-picker') closeCharacterPicker();
+        else if (action === 'save-character-picker') saveCharacterPicker();
+        else if (action === 'delete') deleteSnapshot(id);
+      });
+      overlay.addEventListener('input', event => {
+        if (event.target?.matches?.('[data-pmm-snapshot-name]') && composer) composer.name = event.target.value;
+        else if (event.target?.matches?.('[data-pmm-character-search]') && characterPicker) {
+          characterPicker.query = event.target.value;
+          renderCharacterPickerOptions(overlay);
+        }
+      });
+      overlay.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && characterPicker) {
+          event.preventDefault();
+          closeCharacterPicker();
+          return;
+        }
+        if (event.key === 'Escape' && openMenuId) {
+          event.preventDefault();
+          dismissOpenSnapshotMenu(overlay);
+          return;
+        }
+        if (!event.target?.matches?.('[data-pmm-snapshot-name]')) return;
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          if (isCaptureMode() && overlay.querySelector('[data-pmm-snapshot-action="save-capture"]')) void finishCaptureSnapshot();
+          else saveNewSnapshot(composer?.name);
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          closeComposer();
+        }
+      });
+      DOC.body.appendChild(overlay);
+    }
+    return overlay;
+  }
+
+  function openOverlay() {
+    if (!normalPresetContainer()) {
+      notify('warning', '开关快照仅可在主预设页面使用');
+      return;
+    }
+    if (blockWhileBranchActive()) return;
+    if (!currentPresetName()) {
+      notify('warning', '请先选择一个预设');
+      return;
+    }
+    ensureOverlay();
+    if (!defaultSnapshotForCurrentPreset()) {
+      renderFirstDefaultPrompt();
+      return;
+    }
+    renderOverlay();
+  }
+
+  function normalPresetContainer() {
+    for (const currentDocument of workshopDocuments()) {
+      const root = currentDocument.querySelector?.('#preset-manager-main-panel');
+      if (!root) continue;
+      if (currentDocument.getElementById('pmm-preset-regex-transfer-overlay')) continue;
+      if (root.classList.contains('pmm-worldbook-mode')) continue;
+      if (root.querySelector('.side-panel-root .panel-btn.panel-btn--active')) continue;
+      if (root.querySelector('.pm-panel-container--branch-mode, .pm-panel-container--merge-mode, .pm-panel-container--favorite-mode')) continue;
+      const container = Array.from(root.querySelectorAll('.pm-panel-container'))
+        .find(candidate => !candidate.classList.contains('pm-panel-container--merge-mode')
+          && !candidate.classList.contains('pm-panel-container--branch-mode')
+          && !candidate.classList.contains('pm-panel-container--favorite-mode'));
+      if (container) return container;
+    }
+    return null;
+  }
+
+  function normalTitleActions() {
+    const container = normalPresetContainer();
+    return container?.querySelector?.('.title-actions') || null;
+  }
+
+  function nativeSaveButton() {
+    const container = normalPresetContainer();
+    if (!container) return null;
+    const stashed = container.querySelector('[data-pmm-snapshot-native-save-stashed]');
+    if (stashed) return stashed;
+    return Array.from(container.querySelectorAll('.header-right button.header-card.action-card'))
+      .find(button => button.querySelector('.fa-save, .fa-floppy-disk')) || null;
+  }
+
+  function restoreCaptureNativeSaveButton(button) {
+    if (!button?.dataset?.pmmSnapshotNativeSaveStashed) return;
+    button.classList.remove('pmm-switch-snapshot-native-save-disabled');
+    delete button.dataset.pmmSnapshotNativeSaveDisabled;
+    button.title = button.dataset.pmmSnapshotNativeSaveOriginalTitle || '保存';
+    button.setAttribute('aria-label', button.title);
+    if (button.dataset.pmmSnapshotNativeSaveOriginalHtml) {
+      button.innerHTML = button.dataset.pmmSnapshotNativeSaveOriginalHtml;
+    }
+    button.disabled = button.dataset.pmmSnapshotNativeSaveOriginalDisabled === 'true';
+    delete button.dataset.pmmSnapshotNativeSaveOriginalTitle;
+    delete button.dataset.pmmSnapshotNativeSaveOriginalHtml;
+    delete button.dataset.pmmSnapshotNativeSaveOriginalDisabled;
+    delete button.dataset.pmmSnapshotNativeSaveStashed;
+  }
+
+  function disableNativeSaveForCapture(button) {
+    if (!button) return;
+    if (!button.dataset.pmmSnapshotNativeSaveStashed) {
+      button.dataset.pmmSnapshotNativeSaveStashed = 'true';
+      button.dataset.pmmSnapshotNativeSaveOriginalTitle = button.title || '保存';
+      button.dataset.pmmSnapshotNativeSaveOriginalHtml = button.innerHTML;
+      button.dataset.pmmSnapshotNativeSaveOriginalDisabled = button.disabled ? 'true' : 'false';
+    }
+    button.classList.add('pmm-switch-snapshot-native-save-disabled');
+    button.dataset.pmmSnapshotNativeSaveDisabled = 'true';
+    button.title = '快照模式下不保存主预设';
+    button.setAttribute('aria-label', button.title);
+    button.disabled = true;
+    const markup = button.dataset.pmmSnapshotNativeSaveOriginalHtml || '<div class="card-icon"><i class="fa-solid fa-save"></i></div>';
+    if (button.innerHTML !== markup) button.innerHTML = markup;
+  }
+
+  function restoreCaptureEditButton(button) {
+    if (!button?.dataset?.pmmSnapshotEditStashed) return;
+    const titleContent = button.closest?.('.title-content') || null;
+    const titleRow = titleContent?.querySelector?.('.title-row') || null;
+    button.classList.remove('pmm-switch-snapshot-capture-save');
+    button.style.removeProperty('--pmm-switch-snapshot-capture-width');
+    delete button.dataset.pmmSnapshotCaptureSave;
+    button.title = button.dataset.pmmSnapshotOriginalTitle || '编辑预设名';
+    button.setAttribute('aria-label', button.title);
+    if (button.dataset.pmmSnapshotOriginalHtml) button.innerHTML = button.dataset.pmmSnapshotOriginalHtml;
+    delete button.dataset.pmmSnapshotOriginalTitle;
+    delete button.dataset.pmmSnapshotOriginalHtml;
+    delete button.dataset.pmmSnapshotEditStashed;
+    if (button.dataset.pmmSnapshotCaptureMoved) {
+      delete button.dataset.pmmSnapshotCaptureMoved;
+      if (titleRow && button.parentElement !== titleRow) titleRow.appendChild(button);
+    }
+  }
+
+  function turnEditIntoCaptureSave(button) {
+    if (!button || button.dataset.pmmSnapshotEditStashed) return;
+    button.dataset.pmmSnapshotEditStashed = 'true';
+    button.dataset.pmmSnapshotOriginalTitle = button.title || '编辑预设名';
+    button.dataset.pmmSnapshotOriginalHtml = button.innerHTML;
+    button.classList.add('pmm-switch-snapshot-capture-save');
+    button.dataset.pmmSnapshotCaptureSave = 'true';
+    button.title = '保存快照';
+    button.setAttribute('aria-label', button.title);
+    button.innerHTML = '<i class="fa-solid fa-floppy-disk"></i>';
+  }
+
+  function moveDesktopCaptureSaveToActions(button, triggerButton, actionsHost) {
+    if (!button || !triggerButton || !actionsHost) return;
+    const desktop = Boolean(TOP.matchMedia?.('(min-width:769px)')?.matches ?? ((TOP.innerWidth || 0) > 768));
+    if (!desktop) return;
+    button.dataset.pmmSnapshotCaptureMoved = 'true';
+    if (button.parentElement === actionsHost && triggerButton.nextElementSibling === button) return;
+    actionsHost.insertBefore(button, triggerButton.nextSibling);
+  }
+
+  function swapCaptureToolbarWidths(editButton, triggerButton) {
+    const session = captureMode;
+    if (!session || !editButton || !triggerButton) return;
+    const desktop = Boolean(TOP.matchMedia?.('(min-width:769px)')?.matches ?? ((TOP.innerWidth || 0) > 768));
+    /* 电脑端两个动作同处第二排，固定成同尺寸图标按钮；
+       不再沿用第一排铅笔／相机的测量宽度，避免取消按钮被压扁。 */
+    if (desktop) {
+      editButton.style.removeProperty('--pmm-switch-snapshot-capture-width');
+      triggerButton.style.removeProperty('--pmm-switch-snapshot-capture-width');
+      return;
+    }
+    session.toolbarButtonWidths ||= {};
+    const saveWidth = Number(session.toolbarButtonWidths.save) || Math.round(editButton.getBoundingClientRect().width);
+    const cancelWidth = Number(session.toolbarButtonWidths.cancel) || Math.round(triggerButton.getBoundingClientRect().width);
+    if (!saveWidth || !cancelWidth) return;
+    session.toolbarButtonWidths.save = saveWidth;
+    session.toolbarButtonWidths.cancel = cancelWidth;
+    // 两个按钮在不同 Flex 容器中，交换真实宽度后各再加一点触控余量。
+    // 保存按钮进入录制后的临时图标会量到偏小值，因此再设一个明确下限。
+    const captureExtraWidth = 6;
+    const captureMinimumWidth = 28;
+    editButton.style.setProperty('--pmm-switch-snapshot-capture-width', `${Math.max(cancelWidth + captureExtraWidth, captureMinimumWidth)}px`);
+    triggerButton.style.setProperty('--pmm-switch-snapshot-capture-width', `${Math.max(saveWidth + captureExtraWidth, captureMinimumWidth)}px`);
+  }
+
+  function mountTrigger() {
+    const actionsHost = normalTitleActions();
+    const host = actionsHost;
+    const titleContent = actionsHost?.closest?.('.title-content') || null;
+    const titleHost = titleContent?.closest?.('.header-left') || null;
+    const desktopHomeContainer = actionsHost?.closest?.('.pm-panel-container') || null;
+    for (const node of DOC?.querySelectorAll?.(`.${HOME_TITLE_CLASS}`) || []) {
+      if (node !== titleContent) node.classList.remove(HOME_TITLE_CLASS, CAPTURE_TITLE_CLASS);
+    }
+    for (const node of DOC?.querySelectorAll?.(`.${DESKTOP_HOME_TITLE_HOST_CLASS}`) || []) {
+      if (node !== titleHost) node.classList.remove(DESKTOP_HOME_TITLE_HOST_CLASS);
+    }
+    for (const node of DOC?.querySelectorAll?.(`.${DESKTOP_HOME_PANEL_CLASS}`) || []) {
+      if (node !== desktopHomeContainer) node.classList.remove(DESKTOP_HOME_PANEL_CLASS);
+    }
+    syncCaptureModeUI();
+    const existing = DOC?.querySelectorAll?.(`.${TRIGGER_CLASS}`) || [];
+    for (const button of existing) {
+      if (button.parentElement !== host) button.remove();
+    }
+    const captureActive = isCaptureMode();
+    const currentEditButton = titleContent?.querySelector?.('[data-pmm-snapshot-edit-stashed], .title-row .title-edit-btn[title="编辑预设名"]') || null;
+    const swappedEdits = DOC?.querySelectorAll?.('[data-pmm-snapshot-edit-stashed]') || [];
+    for (const button of swappedEdits) {
+      if (!captureActive || button !== currentEditButton) restoreCaptureEditButton(button);
+    }
+    const swappedNativeSaves = DOC?.querySelectorAll?.('[data-pmm-snapshot-native-save-stashed]') || [];
+    for (const button of swappedNativeSaves) {
+      if (!captureActive || button !== nativeSaveButton()) restoreCaptureNativeSaveButton(button);
+    }
+    if (!host) return;
+
+    titleContent?.classList.add(HOME_TITLE_CLASS);
+    titleHost?.classList.add(DESKTOP_HOME_TITLE_HOST_CLASS);
+    desktopHomeContainer?.classList.add(DESKTOP_HOME_PANEL_CLASS);
+    let button = host.querySelector(`.${TRIGGER_CLASS}`);
+    if (!button) {
+      button = DOC.createElement('button');
+      button.type = 'button';
+      button.className = `title-action-btn ${TRIGGER_CLASS}`;
+      button.dataset.pmmSnapshotTrigger = 'true';
+      const importButton = actionsHost?.querySelector?.('[title="导入"]');
+      if (host === actionsHost && importButton) host.insertBefore(button, importButton);
+      else host.appendChild(button);
+    }
+    if (button.classList.contains('is-capture-mode') !== captureActive) button.classList.toggle('is-capture-mode', captureActive);
+    if (!captureActive) button.style.removeProperty('--pmm-switch-snapshot-capture-width');
+    titleContent?.classList.toggle(CAPTURE_TITLE_CLASS, captureActive);
+    const nextTitle = captureActive ? '取消快照并恢复进入前开关' : '开关快照';
+    if (button.title !== nextTitle) button.title = nextTitle;
+    if (button.getAttribute('aria-label') !== nextTitle) button.setAttribute('aria-label', nextTitle);
+    const nextMarkup = captureActive
+      ? '<i class="fa-solid fa-xmark"></i>'
+      : '<i class="fa-solid fa-camera"></i><span>快照</span>';
+    if (button.innerHTML !== nextMarkup) button.innerHTML = nextMarkup;
+
+    if (captureActive) {
+      turnEditIntoCaptureSave(currentEditButton);
+      moveDesktopCaptureSaveToActions(currentEditButton, button, actionsHost);
+      swapCaptureToolbarWidths(currentEditButton, button);
+      disableNativeSaveForCapture(nativeSaveButton());
+    }
+  }
+
+  function handleDocumentClick(event) {
+    const disabledNativeSave = event.target?.closest?.('[data-pmm-snapshot-native-save-disabled]');
+    if (disabledNativeSave) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      return;
+    }
+    const captureSave = event.target?.closest?.('[data-pmm-snapshot-capture-save]');
+    if (captureSave) {
+      event.preventDefault();
+      event.stopPropagation();
+      openCaptureSavePrompt();
+      return;
+    }
+    const trigger = event.target?.closest?.('[data-pmm-snapshot-trigger]');
+    if (!trigger) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (isCaptureMode()) void exitCaptureMode(true);
+    else openOverlay();
+  }
+
+  function installStyle() {
+    if (!DOC?.head || DOC.getElementById(STYLE_ID)) return;
+    const style = DOC.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      .title-action-btn.${TRIGGER_CLASS}{display:flex!important}.title-edit-btn.pmm-switch-snapshot-capture-save,.title-action-btn.${TRIGGER_CLASS}.is-capture-mode{box-sizing:border-box!important;align-items:center!important;justify-content:center!important;padding:0!important;border:1px solid color-mix(in srgb,#10b981 55%,transparent)!important;border-radius:4px!important;background:color-mix(in srgb,#10b981 15%,transparent)!important;color:#10b981!important;opacity:1!important;box-shadow:none!important}.title-edit-btn.pmm-switch-snapshot-capture-save:hover,.title-action-btn.${TRIGGER_CLASS}.is-capture-mode:hover{background:color-mix(in srgb,#10b981 23%,transparent)!important;color:#10b981!important;opacity:1!important}.title-edit-btn.pmm-switch-snapshot-capture-save i,.title-action-btn.${TRIGGER_CLASS}.is-capture-mode i{color:#10b981!important}.header-right button.pmm-switch-snapshot-native-save-disabled,.header-right button.pmm-switch-snapshot-native-save-disabled:hover{pointer-events:auto!important;cursor:not-allowed!important;opacity:.48!important;filter:none!important;background:rgba(127,127,127,.07)!important;border-color:rgba(148,163,184,.18)!important;box-shadow:none!important;transform:none!important}.header-right button.pmm-switch-snapshot-native-save-disabled::before{display:none!important}.header-right button.pmm-switch-snapshot-native-save-disabled .card-icon{background:rgba(127,127,127,.13)!important;border-color:rgba(148,163,184,.18)!important}.header-right button.pmm-switch-snapshot-native-save-disabled .card-icon i{color:var(--pm-text-secondary,var(--SmartThemeBodyColor,#a1a1aa))!important;opacity:.72!important}#preset-manager-main-panel .pm-panel-container.pmm-switch-snapshot-capture-mode{outline:1px solid color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 78%,transparent)!important;outline-offset:2px!important;box-shadow:0 0 0 4px color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 13%,transparent)!important;border-radius:var(--pm-radius-lg,14px)!important}
+      @media (max-width:768px){#preset-manager-main-panel.pmm-mobile-layout-enabled:not(.pmm-layout-custom-preset-width) .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS} .title-row{flex:0 0 calc(100% - var(--pmm-title-overflow-actions-width) - 22px)!important;width:calc(100% - var(--pmm-title-overflow-actions-width) - 22px)!important;max-width:calc(100% - var(--pmm-title-overflow-actions-width) - 22px)!important}}
+      .header-right button.pmm-switch-snapshot-native-save-disabled,.header-right button.pmm-switch-snapshot-native-save-disabled:hover{position:relative!important;pointer-events:none!important;cursor:default!important;opacity:.3!important;filter:none!important;background:rgba(127,127,127,.04)!important;border-color:rgba(148,163,184,.12)!important;box-shadow:none!important;transform:none!important}.header-right button.pmm-switch-snapshot-native-save-disabled .card-icon{background:rgba(127,127,127,.08)!important;border-color:rgba(148,163,184,.12)!important}.header-right button.pmm-switch-snapshot-native-save-disabled .card-icon i{color:var(--pm-text-secondary,var(--SmartThemeBodyColor,#a1a1aa))!important;opacity:.46!important}
+      .pmm-switch-snapshot-overlay{position:fixed!important;inset:0!important;z-index:2147483600!important;display:flex!important;align-items:center!important;justify-content:center!important;padding:18px!important;box-sizing:border-box!important;background:rgba(0,0,0,.48)!important;backdrop-filter:blur(4px)!important;-webkit-backdrop-filter:blur(4px)!important;color:var(--pm-text-primary,var(--SmartThemeBodyColor,#e5e7eb))!important;font-family:inherit!important}
+      .pmm-switch-snapshot-dialog{position:relative!important;width:min(520px,100%)!important;max-height:min(680px,calc(100dvh - 36px))!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;border:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.35)))!important;border-radius:16px!important;background:var(--pm-panel-bg,var(--SmartThemeBlurTintColor,#1b1d24))!important;box-shadow:0 20px 64px rgba(0,0,0,.38)!important}
+      .pmm-switch-snapshot-head{display:flex!important;align-items:flex-start!important;justify-content:space-between!important;gap:14px!important;padding:16px 18px 13px!important;border-bottom:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.25)))!important}
+      .pmm-switch-snapshot-head h2{display:flex!important;align-items:center!important;gap:8px!important;margin:0!important;font-size:15px!important;font-weight:650!important;color:inherit!important}.pmm-switch-snapshot-head h2 i{color:var(--pm-quote-color,var(--SmartThemeQuoteColor,#7c93ce))!important}.pmm-switch-snapshot-head p{margin:5px 0 0!important;font-size:11px!important;opacity:.62!important}
+      .pmm-switch-snapshot-close,.pmm-switch-snapshot-more{display:flex!important;align-items:center!important;justify-content:center!important;border:1px solid transparent!important;background:transparent!important;color:inherit!important;cursor:pointer!important;border-radius:7px!important}.pmm-switch-snapshot-close{width:28px!important;height:28px!important;opacity:.65!important}.pmm-switch-snapshot-close:hover,.pmm-switch-snapshot-more:hover{background:rgba(127,127,127,.12)!important;opacity:1!important}
+      .pmm-switch-snapshot-first-default{display:flex!important;flex-direction:column!important;align-items:center!important;padding:32px 25px 27px!important;text-align:center!important}.pmm-switch-snapshot-first-default-icon{display:flex!important;align-items:center!important;justify-content:center!important;width:43px!important;height:43px!important;margin-bottom:12px!important;border-radius:13px!important;background:color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 16%,transparent)!important;color:var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2))!important;font-size:18px!important}.pmm-switch-snapshot-first-default h3{margin:0!important;font-size:15px!important;font-weight:650!important}.pmm-switch-snapshot-first-default>p{max-width:330px!important;margin:9px 0 18px!important;font-size:11px!important;line-height:1.55!important;opacity:.68!important}.pmm-switch-snapshot-first-default-actions{display:flex!important;justify-content:center!important;gap:8px!important;width:100%!important}.pmm-switch-snapshot-first-default-actions button{min-height:34px!important;padding:0 13px!important;border:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.32)))!important;border-radius:8px!important;background:rgba(127,127,127,.08)!important;color:inherit!important;font:inherit!important;font-size:12px!important;cursor:pointer!important}.pmm-switch-snapshot-first-default-actions button:last-child{border-color:color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 60%,transparent)!important;background:color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 18%,transparent)!important;font-weight:600!important}.pmm-switch-snapshot-first-default-actions button:last-child i{margin-right:6px!important}
+      .pmm-switch-snapshot-save-capture{padding:21px 18px 18px!important}.pmm-switch-snapshot-save-capture label{display:block!important;margin-bottom:7px!important;font-size:12px!important;font-weight:650!important}.pmm-switch-snapshot-save-capture input{box-sizing:border-box!important;width:100%!important;height:37px!important;padding:0 10px!important;border:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.38)))!important;border-radius:8px!important;background:rgba(127,127,127,.08)!important;color:inherit!important;font:inherit!important;font-size:13px!important;outline:none!important}.pmm-switch-snapshot-save-capture input:focus{border-color:var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2))!important}.pmm-switch-snapshot-save-capture>p{margin:8px 0 14px!important;font-size:10px!important;line-height:1.5!important;opacity:.62!important}.pmm-switch-snapshot-save-capture-actions{display:flex!important;justify-content:flex-end!important;gap:7px!important}.pmm-switch-snapshot-save-capture-actions button{min-height:31px!important;padding:0 11px!important;border:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.32)))!important;border-radius:7px!important;background:rgba(127,127,127,.08)!important;color:inherit!important;font:inherit!important;font-size:11px!important;cursor:pointer!important}.pmm-switch-snapshot-save-capture-actions button:last-child{border-color:color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 60%,transparent)!important;background:color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 18%,transparent)!important;font-weight:600!important}.pmm-switch-snapshot-save-capture-actions i{margin-right:5px!important}
+      .pmm-switch-snapshot-default{display:flex!important;align-items:center!important;gap:12px!important;padding:12px 18px!important;border-bottom:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.20)))!important}.pmm-switch-snapshot-default.is-saved{background:color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 7%,transparent)!important}.pmm-switch-snapshot-default.is-empty{background:rgba(127,127,127,.035)!important}.pmm-switch-snapshot-default-copy{min-width:0!important;flex:1 1 auto!important}.pmm-switch-snapshot-default-copy>div{display:flex!important;align-items:center!important;gap:7px!important;font-size:12px!important;font-weight:650!important}.pmm-switch-snapshot-default-copy>div i{color:var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2))!important}.pmm-switch-snapshot-default-copy small{display:block!important;margin-top:4px!important;font-size:10px!important;line-height:1.35!important;opacity:.62!important}.pmm-switch-snapshot-default>button,.pmm-switch-snapshot-default-actions>button:first-child{display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:5px!important;min-height:30px!important;padding:0 9px!important;border:1px solid color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 60%,transparent)!important;border-radius:7px!important;background:color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 18%,transparent)!important;color:inherit!important;font:inherit!important;font-size:11px!important;font-weight:600!important;cursor:pointer!important;white-space:nowrap!important}.pmm-switch-snapshot-default>button i,.pmm-switch-snapshot-default-actions>button:first-child i{font-size:10px!important}.pmm-switch-snapshot-default-actions{display:flex!important;align-items:center!important;gap:4px!important;flex:0 0 auto!important}.pmm-switch-snapshot-default-actions>button:not(:first-child){display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:5px!important;min-height:30px!important;padding:0 9px!important;border:1px solid rgba(148,163,184,.28)!important;border-radius:7px!important;background:rgba(127,127,127,.08)!important;color:inherit!important;font:inherit!important;font-size:11px!important;font-weight:600!important;cursor:pointer!important;white-space:nowrap!important;opacity:.78!important}.pmm-switch-snapshot-default-actions>button:not(:first-child) i{font-size:10px!important}.pmm-switch-snapshot-default-actions>button:not(:first-child):hover{background:rgba(127,127,127,.14)!important;opacity:1!important}.pmm-switch-snapshot-default-actions>.pmm-switch-snapshot-reset-all{width:30px!important;padding:0!important;border-color:rgba(239,68,68,.35)!important;color:#ef6b6b!important}.pmm-switch-snapshot-default-actions>.pmm-switch-snapshot-reset-all:hover{background:rgba(239,68,68,.13)!important;border-color:rgba(239,68,68,.55)!important}
+      .pmm-switch-snapshot-create{padding:12px 18px!important;border-bottom:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.20)))!important}.pmm-switch-snapshot-create button,.pmm-switch-snapshot-actions>button:first-child{border:1px solid color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 60%,transparent)!important;background:color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 18%,transparent)!important;color:inherit!important;cursor:pointer!important;font:inherit!important;border-radius:8px!important}.pmm-switch-snapshot-create button{width:100%!important;min-height:36px!important;font-size:12px!important;font-weight:600!important}.pmm-switch-snapshot-create button i{margin-right:7px!important}
+
+      .pmm-switch-snapshot-list{min-height:80px!important;max-height:420px!important;overflow:auto!important;padding:8px!important}.pmm-switch-snapshot-row{display:flex!important;flex-wrap:wrap!important;align-items:center!important;column-gap:12px!important;row-gap:6px!important;padding:10px!important;border-radius:10px!important}.pmm-switch-snapshot-row:hover{background:rgba(127,127,127,.08)!important}.pmm-switch-snapshot-copy{min-width:0!important;flex:1 1 auto!important}.pmm-switch-snapshot-name{display:flex!important;align-items:center!important;gap:7px!important;min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-size:13px!important;font-weight:600!important}.pmm-switch-snapshot-meta{margin-top:4px!important;font-size:10px!important;opacity:.58!important}.pmm-switch-snapshot-role{display:inline-flex!important;align-items:center!important;gap:4px!important;flex:0 0 auto!important;padding:2px 6px!important;border-radius:999px!important;background:rgba(127,127,127,.11)!important;font-size:9px!important;font-weight:500!important;opacity:.78!important}.pmm-switch-snapshot-role.is-current{color:var(--pm-quote-color,var(--SmartThemeQuoteColor,#7c93ce))!important;opacity:1!important}
+      .pmm-switch-snapshot-bindings{display:flex!important;flex:0 0 auto!important;min-width:109px!important;align-items:center!important}.pmm-switch-snapshot-locks{display:flex!important;align-items:center!important;gap:5px!important}.pmm-switch-snapshot-lock{display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:4px!important;min-width:52px!important;height:27px!important;padding:0 7px!important;border:1px solid currentColor!important;border-radius:7px!important;background:rgba(127,127,127,.04)!important;color:var(--pm-text-primary,var(--SmartThemeBodyColor,#e5e7eb))!important;font:inherit!important;font-size:10px!important;font-weight:600!important;cursor:pointer!important;opacity:.76!important}.pmm-switch-snapshot-lock:hover{background:rgba(127,127,127,.1)!important;opacity:1!important}.pmm-switch-snapshot-lock.is-character.is-bound{border-color:#22c55e!important;background:rgba(34,197,94,.22)!important;color:#22c55e!important;box-shadow:inset 0 0 0 1px rgba(34,197,94,.18)!important;opacity:1!important}.pmm-switch-snapshot-lock.is-chat.is-bound{border-color:#eab308!important;background:rgba(234,179,8,.22)!important;color:#eab308!important;box-shadow:inset 0 0 0 1px rgba(234,179,8,.18)!important;opacity:1!important}.pmm-switch-snapshot-lock:disabled{pointer-events:none!important;cursor:default!important;border-color:rgba(148,163,184,.18)!important;background:rgba(127,127,127,.04)!important;color:inherit!important;opacity:.25!important}.pmm-switch-snapshot-character-names{box-sizing:border-box!important;display:flex!important;flex:0 0 100%!important;align-items:flex-start!important;gap:5px!important;min-width:0!important;padding:0 2px!important;color:#22c55e!important;font-size:9px!important;line-height:1.4!important;opacity:.78!important}.pmm-switch-snapshot-character-names i{flex:0 0 auto!important;margin-top:2px!important;font-size:8px!important}.pmm-switch-snapshot-character-names span{min-width:0!important;white-space:normal!important;overflow-wrap:anywhere!important}
+      .pmm-switch-snapshot-actions{display:flex!important;align-items:center!important;gap:3px!important;flex:0 0 auto!important}.pmm-switch-snapshot-actions>button:first-child{min-width:42px!important;height:28px!important;padding:0 8px!important;font-size:11px!important}.pmm-switch-snapshot-more{width:25px!important;height:28px!important;font-size:10px!important;opacity:.58!important}.pmm-switch-snapshot-menu-wrap{position:relative!important}.pmm-switch-snapshot-menu{position:absolute!important;z-index:2!important;top:calc(100% + 4px)!important;right:0!important;display:flex!important;flex-direction:column!important;min-width:156px!important;padding:5px!important;border:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.32)))!important;border-radius:9px!important;background:var(--pm-card-bg,var(--SmartThemeBlurTintColor,#232630))!important;box-shadow:0 10px 24px rgba(0,0,0,.28)!important}.pmm-switch-snapshot-menu--pending{visibility:hidden!important}.pmm-switch-snapshot-menu button{display:flex!important;align-items:center!important;gap:7px!important;min-height:29px!important;padding:0 8px!important;border:0!important;border-radius:6px!important;background:transparent!important;color:inherit!important;text-align:left!important;font:inherit!important;font-size:11px!important;cursor:pointer!important}.pmm-switch-snapshot-menu button:hover{background:rgba(127,127,127,.12)!important}.pmm-switch-snapshot-menu button i{width:11px!important;opacity:.65!important}.pmm-switch-character-picker-layer{position:absolute!important;inset:0!important;z-index:6!important;box-sizing:border-box!important;display:flex!important;align-items:center!important;justify-content:center!important;padding:14px!important}.pmm-switch-character-picker-backdrop{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;border:0!important;background:rgba(0,0,0,.48)!important;backdrop-filter:blur(2px)!important;-webkit-backdrop-filter:blur(2px)!important;cursor:pointer!important}.pmm-switch-character-picker{position:relative!important;z-index:1!important;box-sizing:border-box!important;width:min(390px,100%)!important;max-height:calc(100% - 10px)!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;border:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.38)))!important;border-radius:13px!important;background:var(--pm-card-bg,var(--SmartThemeBlurTintColor,#232630))!important;box-shadow:0 16px 42px rgba(0,0,0,.38)!important}.pmm-switch-character-picker>header{display:flex!important;align-items:flex-start!important;justify-content:space-between!important;gap:12px!important;padding:13px 14px 11px!important;border-bottom:1px solid rgba(148,163,184,.18)!important}.pmm-switch-character-picker>header h3{display:flex!important;align-items:center!important;gap:7px!important;margin:0!important;font-size:13px!important}.pmm-switch-character-picker>header h3 i{color:#22c55e!important}.pmm-switch-character-picker>header small{display:block!important;margin-top:4px!important;font-size:9px!important;opacity:.58!important}.pmm-switch-character-picker>header button{display:flex!important;align-items:center!important;justify-content:center!important;width:25px!important;height:25px!important;border:0!important;border-radius:6px!important;background:transparent!important;color:inherit!important;cursor:pointer!important;opacity:.65!important}.pmm-switch-character-picker-search{box-sizing:border-box!important;display:flex!important;align-items:center!important;gap:7px!important;margin:11px 12px 8px!important;padding:0 9px!important;height:34px!important;border:1px solid rgba(148,163,184,.28)!important;border-radius:8px!important;background:rgba(127,127,127,.07)!important}.pmm-switch-character-picker-search:focus-within{border-color:#22c55e!important}.pmm-switch-character-picker-search i{font-size:10px!important;opacity:.55!important}.pmm-switch-character-picker-search input{min-width:0!important;flex:1 1 auto!important;border:0!important;outline:0!important;background:transparent!important;color:inherit!important;font:inherit!important;font-size:11px!important}.pmm-switch-character-picker-list{min-height:90px!important;overflow:auto!important;padding:0 8px 8px!important}.pmm-switch-character-picker-option{box-sizing:border-box!important;display:flex!important;align-items:center!important;gap:9px!important;width:100%!important;min-height:39px!important;margin:2px 0!important;padding:6px 8px!important;border:1px solid transparent!important;border-radius:8px!important;background:transparent!important;color:inherit!important;text-align:left!important;font:inherit!important;cursor:pointer!important}.pmm-switch-character-picker-option:hover{background:rgba(127,127,127,.09)!important}.pmm-switch-character-picker-option>i{width:14px!important;color:inherit!important;font-size:13px!important;opacity:.5!important}.pmm-switch-character-picker-option>span{display:flex!important;min-width:0!important;flex-direction:column!important;gap:2px!important}.pmm-switch-character-picker-option strong{overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-size:11px!important;font-weight:600!important}.pmm-switch-character-picker-option small{overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-size:9px!important;opacity:.5!important}.pmm-switch-character-picker-option.is-selected{border-color:rgba(34,197,94,.3)!important;background:rgba(34,197,94,.09)!important}.pmm-switch-character-picker-option.is-selected>i{color:#22c55e!important;opacity:1!important}.pmm-switch-character-picker-empty{display:flex!important;align-items:center!important;justify-content:center!important;min-height:90px!important;font-size:10px!important;opacity:.58!important}.pmm-switch-character-picker-actions{display:flex!important;align-items:center!important;justify-content:flex-end!important;gap:7px!important;padding:10px 12px!important;border-top:1px solid rgba(148,163,184,.18)!important}.pmm-switch-character-picker-actions>span{margin-right:auto!important;font-size:9px!important;opacity:.58!important}.pmm-switch-character-picker-actions button{height:29px!important;padding:0 10px!important;border:1px solid rgba(148,163,184,.28)!important;border-radius:7px!important;background:rgba(127,127,127,.07)!important;color:inherit!important;font:inherit!important;font-size:10px!important;cursor:pointer!important}.pmm-switch-character-picker-actions button:last-child{border-color:rgba(34,197,94,.45)!important;background:rgba(34,197,94,.15)!important;font-weight:600!important}.pmm-switch-character-picker-actions button i{margin-right:4px!important}.pmm-switch-snapshot-composer{padding:13px 18px!important;border-bottom:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.20)))!important}.pmm-switch-snapshot-composer label{display:block!important;margin-bottom:7px!important;font-size:11px!important;font-weight:600!important}.pmm-switch-snapshot-composer input{box-sizing:border-box!important;width:100%!important;height:35px!important;padding:0 10px!important;border:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.38)))!important;border-radius:8px!important;background:rgba(127,127,127,.08)!important;color:inherit!important;font:inherit!important;font-size:12px!important;outline:none!important}.pmm-switch-snapshot-composer input:focus{border-color:var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2))!important}.pmm-switch-snapshot-composer p{margin:7px 0 10px!important;font-size:10px!important;opacity:.6!important}.pmm-switch-snapshot-composer-actions{display:flex!important;justify-content:flex-end!important;gap:7px!important}.pmm-switch-snapshot-composer-actions button{min-height:30px!important;padding:0 11px!important;border:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.32)))!important;border-radius:7px!important;background:rgba(127,127,127,.08)!important;color:inherit!important;font:inherit!important;font-size:11px!important;cursor:pointer!important}.pmm-switch-snapshot-composer-actions button:last-child{border-color:color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 60%,transparent)!important;background:color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 18%,transparent)!important}.pmm-switch-snapshot-composer-actions i{margin-right:5px!important}.pmm-switch-snapshot-empty{min-height:150px!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:8px!important;text-align:center!important;font-size:12px!important;opacity:.72!important}.pmm-switch-snapshot-empty i{font-size:22px!important;opacity:.55!important}.pmm-switch-snapshot-empty small{max-width:250px!important;font-size:10px!important;line-height:1.5!important;opacity:.72!important}.pmm-switch-snapshot-dialog footer{padding:11px 18px!important;border-top:1px solid var(--pm-border,var(--SmartThemeBorderColor,rgba(148,163,184,.20)))!important;font-size:10px!important;line-height:1.45!important;opacity:.55!important}
+      .pmm-switch-character-picker-actions{flex-wrap:wrap!important}.pmm-switch-snapshot-menu .pmm-switch-snapshot-clear-characters:not(:disabled){color:#ef6b6b!important}.pmm-switch-snapshot-menu .pmm-switch-snapshot-clear-characters:disabled{pointer-events:none!important;background:transparent!important;color:inherit!important;opacity:.25!important}
+      .pmm-switch-snapshot-row.is-active{background:color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 7%,transparent)!important}.pmm-switch-snapshot-actions>button.is-current:disabled,.pmm-switch-snapshot-default-actions>button:disabled{cursor:default!important;pointer-events:none!important;border-color:rgba(148,163,184,.20)!important;background:rgba(127,127,127,.07)!important;color:inherit!important;opacity:.48!important}
+      @media (max-width:768px){.pmm-switch-snapshot-overlay{align-items:flex-end!important;padding:8px!important}.pmm-switch-snapshot-dialog{max-height:min(650px,calc(100dvh - 16px))!important;border-radius:17px!important}.pmm-switch-snapshot-head{padding:15px 15px 12px!important}#preset-manager-main-panel .pm-panel-container.pmm-switch-snapshot-capture-mode{outline-offset:1px!important}.pmm-switch-snapshot-first-default{padding:29px 20px 24px!important}.pmm-switch-snapshot-save-capture{padding:19px 15px 15px!important}.pmm-switch-snapshot-default{padding:10px 15px!important;gap:8px!important}.pmm-switch-snapshot-default>button,.pmm-switch-snapshot-default-actions>button:first-child{padding:0 8px!important}.pmm-switch-snapshot-create{padding:10px 15px!important}.pmm-switch-snapshot-list{max-height:390px!important;padding:6px!important}.pmm-switch-snapshot-row{padding:10px 8px!important;column-gap:7px!important;row-gap:5px!important}.pmm-switch-snapshot-copy{flex-basis:115px!important}.pmm-switch-snapshot-bindings{min-width:103px!important}.pmm-switch-snapshot-lock{min-width:49px!important;padding:0 5px!important}.pmm-switch-snapshot-actions{gap:1px!important}.pmm-switch-snapshot-more{width:23px!important}.pmm-switch-character-picker-layer{padding:10px!important}.pmm-switch-character-picker{max-height:calc(100% - 4px)!important}.pmm-switch-snapshot-dialog footer{padding:10px 15px!important}}
+    `;
+    // 快照录制的整框沿用保存与取消按钮的绿色，避免和普通边框混在一起。
+    style.textContent += `.title-edit-btn.pmm-switch-snapshot-capture-save,.title-action-btn.${TRIGGER_CLASS}.is-capture-mode{width:var(--pmm-switch-snapshot-capture-width,auto)!important;min-width:var(--pmm-switch-snapshot-capture-width,auto)!important;max-width:var(--pmm-switch-snapshot-capture-width,none)!important;flex:0 0 var(--pmm-switch-snapshot-capture-width,auto)!important}#preset-manager-main-panel .pm-header .title-row>.title-edit-btn.pmm-switch-snapshot-capture-save{width:var(--pmm-switch-snapshot-capture-width,auto)!important;min-width:var(--pmm-switch-snapshot-capture-width,auto)!important;max-width:var(--pmm-switch-snapshot-capture-width,none)!important;flex:0 0 var(--pmm-switch-snapshot-capture-width,auto)!important}.title-content.${CAPTURE_TITLE_CLASS}{gap:7px!important}.title-content.${CAPTURE_TITLE_CLASS} [title="导入"],.title-content.${CAPTURE_TITLE_CLASS} [title="导出"]{display:none!important}#preset-manager-main-panel .pm-panel-container.pmm-switch-snapshot-capture-mode .pmm-preset-search-btn,#preset-manager-main-panel .pm-panel-container.pmm-switch-snapshot-capture-mode .side-panel-root{display:none!important}#preset-manager-main-panel .pm-panel-container.pmm-switch-snapshot-capture-mode{outline:1px solid color-mix(in srgb,#10b981 78%,transparent)!important;outline-offset:2px!important;box-shadow:0 0 0 4px color-mix(in srgb,#10b981 13%,transparent)!important,0 0 18px color-mix(in srgb,#10b981 12%,transparent)!important;border-radius:var(--pm-radius-lg,14px)!important}@media (max-width:768px){#preset-manager-main-panel .pm-panel-container.pmm-switch-snapshot-capture-mode{outline-offset:1px!important}#preset-manager-main-panel.pmm-mobile-layout-enabled:not(.pmm-layout-custom-preset-width) .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${CAPTURE_TITLE_CLASS} .title-row{flex:0 0 calc(100% - var(--pmm-title-overflow-actions-width) - 36px)!important;width:calc(100% - var(--pmm-title-overflow-actions-width) - 36px)!important;max-width:calc(100% - var(--pmm-title-overflow-actions-width) - 36px)!important}}`;
+    style.textContent += `@media (min-width:769px){#preset-manager-main-panel .pm-panel-container.${DESKTOP_HOME_PANEL_CLASS}>.pm-main-wrapper{flex:0 0 620px!important;width:620px!important;min-width:620px!important;max-width:620px!important}#preset-manager-main-panel .pm-panel-container.${DESKTOP_HOME_PANEL_CLASS}>.pm-main-wrapper>.preset-panel{width:100%!important;min-width:0!important;max-width:100%!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .header-left.${DESKTOP_HOME_TITLE_HOST_CLASS}{flex:0 0 208px!important;width:208px!important;min-width:208px!important;max-width:208px!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .header-left.${DESKTOP_HOME_TITLE_HOST_CLASS} .title-card{width:100%!important;min-width:0!important;max-width:100%!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS}{min-width:0!important;width:100%!important;max-width:100%!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS}>.title-actions{margin-left:-30px!important;gap:6px!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS}>.title-actions>.title-action-btn{flex:0 0 auto!important;white-space:nowrap!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS}>.title-row>.title-edit-btn{display:flex!important;visibility:visible!important;flex:0 0 20px!important;width:20px!important;min-width:20px!important}.title-content.${CAPTURE_TITLE_CLASS} .title-actions>[title="保存开关"],.title-content.${CAPTURE_TITLE_CLASS} .title-actions>[title^="同步开关"]{display:none!important}.title-content.${CAPTURE_TITLE_CLASS} .title-actions>.title-edit-btn.pmm-switch-snapshot-capture-save{display:flex!important}}`;
+    style.textContent += `@media (min-width:769px){/* 快照录制的取消与保存均放在标题卡片第二排中央，避免 Tauri 将取消按钮压成细条。 */#preset-manager-main-panel .pm-header .title-content.${CAPTURE_TITLE_CLASS}>.title-actions{display:flex!important;align-items:center!important;justify-content:center!important;width:100%!important;margin-left:0!important;gap:7px!important}#preset-manager-main-panel .pm-header .title-content.${CAPTURE_TITLE_CLASS}>.title-actions>.title-action-btn.${TRIGGER_CLASS}.is-capture-mode,#preset-manager-main-panel .pm-header .title-content.${CAPTURE_TITLE_CLASS}>.title-actions>.title-edit-btn.pmm-switch-snapshot-capture-save{display:flex!important;align-items:center!important;justify-content:center!important;box-sizing:border-box!important;flex:0 0 28px!important;width:28px!important;min-width:28px!important;max-width:28px!important;height:24px!important;min-height:24px!important;margin:0!important;padding:0!important;line-height:1!important}}`;
+    style.textContent += `.pmm-switch-snapshot-dialog footer.pmm-switch-snapshot-footer{display:grid!important;gap:5px!important}.pmm-switch-snapshot-dialog footer.pmm-switch-snapshot-footer>span{display:block!important}.pmm-switch-snapshot-dialog footer.pmm-switch-snapshot-footer>span:first-child{font-weight:500!important;opacity:.82!important}.pmm-switch-snapshot-dialog footer.pmm-switch-snapshot-footer>span:last-child{font-size:9px!important;line-height:1.55!important;opacity:.78!important}`;
+    DOC.head.appendChild(style);
+  }
+
+  function scheduleMount() {
+    if (scheduled) return;
+    const request = TOP.requestAnimationFrame || SELF.requestAnimationFrame || (fn => TOP.setTimeout(fn, 16));
+    scheduled = request(() => { scheduled = 0; mountTrigger(); });
+  }
+
+  function workshopPanel() {
+    for (const currentDocument of workshopDocuments()) {
+      const panel = currentDocument?.querySelector?.('#preset-manager-main-panel');
+      if (panel) return panel;
+    }
+    return null;
+  }
+
+  function panelInsideNode(node) {
+    if (!node || (node.nodeType !== 1 && node.nodeType !== 11)) return null;
+    if (node.nodeType === 1 && node.matches?.('#preset-manager-main-panel')) return node;
+    return node.querySelector?.('#preset-manager-main-panel') || null;
+  }
+
+  function disconnectWorkshopObservers() {
+    discoveryObserver?.disconnect();
+    panelObserver?.disconnect();
+    panelParentObserver?.disconnect();
+    discoveryObserver = null;
+    panelObserver = null;
+    panelParentObserver = null;
+    observedPanel = null;
+    observedPanelParent = null;
+  }
+
+  function startWorkshopDiscovery() {
+    if (discoveryObserver || observedPanel?.isConnected) return;
+    const roots = workshopDocuments()
+      .map(currentDocument => currentDocument?.documentElement)
+      .filter(Boolean);
+    if (!roots.length || typeof TOP.MutationObserver !== 'function') return;
+    discoveryObserver = new TOP.MutationObserver(records => {
+      let panel = null;
+      for (const record of records) {
+        for (const node of record.addedNodes || []) {
+          panel = panelInsideNode(node);
+          if (panel) break;
+        }
+        if (panel) break;
+      }
+      if (panel) observeWorkshopPanel(panel);
+    });
+    // 工坊尚未出现时只做节点命中过滤，不再因聊天区的每次变化重扫整页。
+    let observing = false;
+    for (const root of roots) {
+      try {
+        discoveryObserver.observe(root, { childList: true, subtree: true });
+        observing = true;
+      } catch (_) {}
+    }
+    if (!observing) discoveryObserver = null;
+  }
+
+  function observeWorkshopPanel(panel) {
+    if (!panel) {
+      panelObserver?.disconnect();
+      panelParentObserver?.disconnect();
+      panelObserver = null;
+      panelParentObserver = null;
+      observedPanel = null;
+      observedPanelParent = null;
+      startWorkshopDiscovery();
+      return;
+    }
+    if (panel === observedPanel && panel.isConnected && panel.parentNode === observedPanelParent) return;
+    discoveryObserver?.disconnect();
+    panelObserver?.disconnect();
+    panelParentObserver?.disconnect();
+    discoveryObserver = null;
+    observedPanel = panel;
+    observedPanelParent = panel.parentNode || null;
+    panelObserver = new TOP.MutationObserver(scheduleMount);
+    panelObserver.observe(panel, { childList: true, subtree: true });
+    if (observedPanelParent) {
+      panelParentObserver = new TOP.MutationObserver(() => {
+        if (observedPanel?.isConnected && observedPanel.parentNode === observedPanelParent) return;
+        const nextPanel = workshopPanel();
+        observeWorkshopPanel(nextPanel);
+        scheduleMount();
+      });
+      panelParentObserver.observe(observedPanelParent, { childList: true });
+    }
+    scheduleMount();
+  }
+
+  function install() {
+    const store = readStore();
+    if (normalizeUniqueBindings(store)) writeStore(store);
+    installStyle();
+    DOC.addEventListener('click', handleDocumentClick, true);
+    const panel = workshopPanel();
+    if (panel) observeWorkshopPanel(panel);
+    else startWorkshopDiscovery();
+    syncChatBindingListener(store, true);
+  }
+
+  TOP[API_KEY] = {
+    open: openOverlay,
+    list: () => clone(readStore().snapshots),
+    activeForPreset: presetName => {
+      const snapshot = activeSnapshotForPreset(presetName);
+      return snapshot ? { id:snapshot.id, name:snapshot.name, presetName:snapshot.presetName } : null;
+    },
+    cleanup() {
+      disconnectWorkshopObservers();
+      DOC.removeEventListener('click', handleDocumentClick, true);
+      uninstallChatBindingListener();
+      if (scheduled) {
+        try { (TOP.cancelAnimationFrame || SELF.cancelAnimationFrame || TOP.clearTimeout)(scheduled); } catch (_) {}
+        scheduled = 0;
+      }
+      closeOverlay();
+      captureMode = null;
+      DOC?.querySelectorAll?.(`.${TRIGGER_CLASS}`).forEach(button => button.remove());
+      DOC?.querySelectorAll?.(`.${HOME_TITLE_CLASS}`).forEach(node => node.classList.remove(HOME_TITLE_CLASS, CAPTURE_TITLE_CLASS));
+      DOC?.querySelectorAll?.(`.${DESKTOP_HOME_TITLE_HOST_CLASS}`).forEach(node => node.classList.remove(DESKTOP_HOME_TITLE_HOST_CLASS));
+      DOC?.querySelectorAll?.(`.${DESKTOP_HOME_PANEL_CLASS}`).forEach(node => node.classList.remove(DESKTOP_HOME_PANEL_CLASS));
+      DOC?.querySelectorAll?.('[data-pmm-snapshot-edit-stashed]').forEach(restoreCaptureEditButton);
+      DOC?.querySelectorAll?.('[data-pmm-snapshot-native-save-stashed]').forEach(restoreCaptureNativeSaveButton);
+      DOC?.querySelectorAll?.('.pmm-switch-snapshot-capture-mode').forEach(node => node.classList.remove('pmm-switch-snapshot-capture-mode'));
+      DOC?.getElementById?.(STYLE_ID)?.remove();
+      try { delete TOP[API_KEY]; } catch (_) {}
+    },
+  };
+  install();
+  console.info('[预设工坊] Gecko v3.13 已加载：开关快照仅显示于主预设页面标题栏。');
+})();

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../dist/workshop-v3.08.js', import.meta.url), 'utf8');
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
 
-assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.12'"), 'Gecko 扩展版本号不是 3.1.12');
+assert.ok(entry.includes("const EXTENSION_VERSION = '3.1.13'"), 'Gecko 扩展版本号不是 3.1.13');
 assert.ok(entry.includes("new URL('./workshop-v3.08.js', import.meta.url)"), '启动器没有指向 v3.05 业务入口');
 
 for (const marker of [
@@ -34,8 +34,10 @@ for (const marker of [
   assert.ok(source.includes(marker), `Tauri iOS 编辑器防溢出缺少实现：${marker}`);
 }
 
-const addedCode = source.slice(source.indexOf('/* ===== PMM_GROUP_SELECT_NESTING_TEST24'));
-assert.ok(addedCode.length > 0, '无法定位本次新增代码');
+const addedStart = source.indexOf('/* ===== PMM_GROUP_SELECT_NESTING_TEST24');
+const addedEnd = source.indexOf('/* ===== PMM_SWITCH_SNAPSHOTS_GECKO_V313', addedStart);
+const addedCode = source.slice(addedStart, addedEnd);
+assert.ok(addedStart >= 0 && addedEnd > addedStart, '无法定位分组／Tauri 代码范围');
 assert.ok(!/worldbook|data-wb|pmm-wb/iu.test(addedCode), '本次移植不应包含世界书功能或标记');
 
 console.log('v3.05 回归通过：已保留分组内全选、原位子分组和 Tauri iOS 防溢出，并加入独立世界书模块。');

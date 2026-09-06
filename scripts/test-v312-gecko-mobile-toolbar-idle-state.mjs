@@ -23,4 +23,4 @@ assert.ok(source.includes('.action-card.primary'), '原有保存高亮样式丢�
 assert.ok(source.includes('function keepRuntimeFrameRenderable()'), 'Gecko 后台 iframe 补丁丢失');
 assert.ok(source.includes('PMM_GECKO_TOUCH_SCROLL_V296'), 'Gecko 触摸滚动补丁丢失');
 
-console.log('Gecko v3.1.12 手机顶部按钮通过：夜间静止态无框，取消后无悬停竖线。');
+console.log('Gecko v3.1.13 手机顶部按钮通过：夜间静止态无框，取消后无悬停竖线。');
