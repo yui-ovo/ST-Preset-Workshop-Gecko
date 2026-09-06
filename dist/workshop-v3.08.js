@@ -10419,6 +10419,14 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
     max-width:var(--pmm-title-overflow-actions-width)!important;
   }
 
+  /* 约 360 CSS 像素的窄手机放回 20px 给右侧关闭键；较宽手机保持原有 150px 标题外框。 */
+  @media (max-width:374px){
+    #preset-manager-main-panel.pmm-mobile-layout-enabled .pm-panel-container > .pm-main-wrapper .pm-header,
+    #preset-manager-main-panel.pmm-mobile-layout-enabled .pm-panel-container--merge-mode > .preset-panel .pm-header{
+      --pmm-title-viewport-width:130px!important;
+    }
+  }
+
   /* 手动动过滑杆后，只放大内部名称与内容行；外层视窗仍固定，铅笔可被推到横划区。 */
   #preset-manager-main-panel.pmm-mobile-layout-enabled.pmm-layout-custom-preset-width .pm-panel-container > .pm-main-wrapper .pm-header .title-content,
   #preset-manager-main-panel.pmm-mobile-layout-enabled.pmm-layout-custom-preset-width .pm-panel-container--merge-mode > .preset-panel .pm-header .title-content{
@@ -13722,6 +13730,7 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
   let autoApplyTimer = 0;
   let autoApplySerial = 0;
   let lastAutoContextKey = '';
+  let snapshotViewportCleanup = null;
 
   const text = value => String(value ?? '').trim();
   const clone = value => {
@@ -14838,7 +14847,76 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
     catch (_) { return date.toLocaleString(); }
   }
 
+  function isSnapshotMobile(view) {
+    try {
+      const media = view?.matchMedia?.('(max-width:768px)');
+      if (typeof media?.matches === 'boolean') return media.matches;
+    } catch (_) {}
+    return Math.min(Number(view?.innerWidth || 9999), Number(view?.innerHeight || 9999)) <= 768;
+  }
+
+  function unbindSnapshotViewport() {
+    try { snapshotViewportCleanup?.(); } catch (_) {}
+    snapshotViewportCleanup = null;
+  }
+
+  // 手机浏览器的 layout viewport 会包含可收缩地址栏；快照需跟随真实 visual viewport。
+  function bindSnapshotToVisibleViewport(overlay, ownerDocument) {
+    unbindSnapshotViewport();
+    const view = ownerDocument?.defaultView || TOP || SELF;
+    if (!overlay || !isSnapshotMobile(view)) return;
+    const viewport = view.visualViewport;
+    const later = view.setTimeout?.bind(view) || TOP.setTimeout?.bind(TOP) || SELF.setTimeout?.bind(SELF);
+    const clearLater = view.clearTimeout?.bind(view) || TOP.clearTimeout?.bind(TOP) || SELF.clearTimeout?.bind(SELF);
+    const request = view.requestAnimationFrame?.bind(view) || (callback => later(callback, 0));
+    const cancel = view.cancelAnimationFrame?.bind(view) || clearLater;
+    let frame = 0;
+    let orientationTimer = 0;
+    const clearPosition = () => {
+      for (const property of ['position', 'inset', 'left', 'top', 'width', 'height', '--pmm-switch-snapshot-visible-height']) overlay.style.removeProperty(property);
+    };
+    const update = () => {
+      frame = 0;
+      if (!overlay?.isConnected) return;
+      if (!isSnapshotMobile(view)) { clearPosition(); return; }
+      const left = Number(view.scrollX || view.pageXOffset || 0) + Number(viewport?.offsetLeft || 0);
+      const top = Number(view.scrollY || view.pageYOffset || 0) + Number(viewport?.offsetTop || 0);
+      const width = Math.max(1, Number(viewport?.width || view.innerWidth || ownerDocument.documentElement?.clientWidth || 1));
+      const height = Math.max(1, Number(viewport?.height || view.innerHeight || ownerDocument.documentElement?.clientHeight || 1));
+      overlay.style.setProperty('position', 'absolute', 'important');
+      overlay.style.setProperty('inset', 'auto', 'important');
+      overlay.style.setProperty('left', `${left}px`, 'important');
+      overlay.style.setProperty('top', `${top}px`, 'important');
+      overlay.style.setProperty('width', `${width}px`, 'important');
+      overlay.style.setProperty('height', `${height}px`, 'important');
+      overlay.style.setProperty('--pmm-switch-snapshot-visible-height', `${height}px`, 'important');
+    };
+    const scheduleUpdate = () => { if (!frame) frame = request(update); };
+    const onOrientationChange = () => {
+      scheduleUpdate();
+      if (orientationTimer) clearLater?.(orientationTimer);
+      orientationTimer = later?.(scheduleUpdate, 120) || 0;
+    };
+    update();
+    viewport?.addEventListener?.('resize', scheduleUpdate, { passive: true });
+    viewport?.addEventListener?.('scroll', scheduleUpdate, { passive: true });
+    view.addEventListener?.('resize', scheduleUpdate, { passive: true });
+    view.addEventListener?.('scroll', scheduleUpdate, { passive: true });
+    view.addEventListener?.('orientationchange', onOrientationChange, { passive: true });
+    snapshotViewportCleanup = () => {
+      if (frame) cancel?.(frame);
+      if (orientationTimer) clearLater?.(orientationTimer);
+      viewport?.removeEventListener?.('resize', scheduleUpdate);
+      viewport?.removeEventListener?.('scroll', scheduleUpdate);
+      view.removeEventListener?.('resize', scheduleUpdate);
+      view.removeEventListener?.('scroll', scheduleUpdate);
+      view.removeEventListener?.('orientationchange', onOrientationChange);
+      clearPosition();
+    };
+  }
+
   function closeOverlay() {
+    unbindSnapshotViewport();
     composer = null;
     openMenuId = '';
     characterPicker = null;
@@ -15217,6 +15295,7 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
       });
       DOC.body.appendChild(overlay);
     }
+    bindSnapshotToVisibleViewport(overlay, overlay.ownerDocument || DOC);
     return overlay;
   }
 
@@ -15479,6 +15558,7 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
       .pmm-switch-snapshot-row.is-active{background:color-mix(in srgb,var(--pm-quote-color,var(--SmartThemeQuoteColor,#6b7db2)) 7%,transparent)!important}.pmm-switch-snapshot-actions>button.is-current:disabled,.pmm-switch-snapshot-default-actions>button:disabled{cursor:default!important;pointer-events:none!important;border-color:rgba(148,163,184,.20)!important;background:rgba(127,127,127,.07)!important;color:inherit!important;opacity:.48!important}
       @media (max-width:768px){.pmm-switch-snapshot-overlay{align-items:flex-end!important;padding:8px!important}.pmm-switch-snapshot-dialog{max-height:min(650px,calc(100dvh - 16px))!important;border-radius:17px!important}.pmm-switch-snapshot-head{padding:15px 15px 12px!important}#preset-manager-main-panel .pm-panel-container.pmm-switch-snapshot-capture-mode{outline-offset:1px!important}.pmm-switch-snapshot-first-default{padding:29px 20px 24px!important}.pmm-switch-snapshot-save-capture{padding:19px 15px 15px!important}.pmm-switch-snapshot-default{padding:10px 15px!important;gap:8px!important}.pmm-switch-snapshot-default>button,.pmm-switch-snapshot-default-actions>button:first-child{padding:0 8px!important}.pmm-switch-snapshot-create{padding:10px 15px!important}.pmm-switch-snapshot-list{max-height:390px!important;padding:6px!important}.pmm-switch-snapshot-row{padding:10px 8px!important;column-gap:7px!important;row-gap:5px!important}.pmm-switch-snapshot-copy{flex-basis:115px!important}.pmm-switch-snapshot-bindings{min-width:103px!important}.pmm-switch-snapshot-lock{min-width:49px!important;padding:0 5px!important}.pmm-switch-snapshot-actions{gap:1px!important}.pmm-switch-snapshot-more{width:23px!important}.pmm-switch-character-picker-layer{padding:10px!important}.pmm-switch-character-picker{max-height:calc(100% - 4px)!important}.pmm-switch-snapshot-dialog footer{padding:10px 15px!important}}
     `;
+    style.textContent += `@media (max-width:768px){.pmm-switch-snapshot-overlay{--pmm-switch-snapshot-safe-top:max(8px,env(safe-area-inset-top,0px));--pmm-switch-snapshot-safe-right:max(8px,env(safe-area-inset-right,0px));--pmm-switch-snapshot-safe-bottom:max(8px,env(safe-area-inset-bottom,0px));--pmm-switch-snapshot-safe-left:max(8px,env(safe-area-inset-left,0px));padding:var(--pmm-switch-snapshot-safe-top) var(--pmm-switch-snapshot-safe-right) var(--pmm-switch-snapshot-safe-bottom) var(--pmm-switch-snapshot-safe-left)!important}.pmm-switch-snapshot-dialog{max-height:min(650px,calc(var(--pmm-switch-snapshot-visible-height,100dvh) - var(--pmm-switch-snapshot-safe-top) - var(--pmm-switch-snapshot-safe-bottom)))!important}}`;
     // 快照录制的整框沿用保存与取消按钮的绿色，避免和普通边框混在一起。
     style.textContent += `.title-edit-btn.pmm-switch-snapshot-capture-save,.title-action-btn.${TRIGGER_CLASS}.is-capture-mode{width:var(--pmm-switch-snapshot-capture-width,auto)!important;min-width:var(--pmm-switch-snapshot-capture-width,auto)!important;max-width:var(--pmm-switch-snapshot-capture-width,none)!important;flex:0 0 var(--pmm-switch-snapshot-capture-width,auto)!important}#preset-manager-main-panel .pm-header .title-row>.title-edit-btn.pmm-switch-snapshot-capture-save{width:var(--pmm-switch-snapshot-capture-width,auto)!important;min-width:var(--pmm-switch-snapshot-capture-width,auto)!important;max-width:var(--pmm-switch-snapshot-capture-width,none)!important;flex:0 0 var(--pmm-switch-snapshot-capture-width,auto)!important}.title-content.${CAPTURE_TITLE_CLASS}{gap:7px!important}.title-content.${CAPTURE_TITLE_CLASS} [title="导入"],.title-content.${CAPTURE_TITLE_CLASS} [title="导出"]{display:none!important}#preset-manager-main-panel .pm-panel-container.pmm-switch-snapshot-capture-mode .pmm-preset-search-btn,#preset-manager-main-panel .pm-panel-container.pmm-switch-snapshot-capture-mode .side-panel-root{display:none!important}#preset-manager-main-panel .pm-panel-container.pmm-switch-snapshot-capture-mode{outline:1px solid color-mix(in srgb,#10b981 78%,transparent)!important;outline-offset:2px!important;box-shadow:0 0 0 4px color-mix(in srgb,#10b981 13%,transparent)!important,0 0 18px color-mix(in srgb,#10b981 12%,transparent)!important;border-radius:var(--pm-radius-lg,14px)!important}@media (max-width:768px){#preset-manager-main-panel .pm-panel-container.pmm-switch-snapshot-capture-mode{outline-offset:1px!important}#preset-manager-main-panel.pmm-mobile-layout-enabled:not(.pmm-layout-custom-preset-width) .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${CAPTURE_TITLE_CLASS} .title-row{flex:0 0 calc(100% - var(--pmm-title-overflow-actions-width) - 36px)!important;width:calc(100% - var(--pmm-title-overflow-actions-width) - 36px)!important;max-width:calc(100% - var(--pmm-title-overflow-actions-width) - 36px)!important}}`;
     style.textContent += `@media (min-width:769px){#preset-manager-main-panel .pm-panel-container.${DESKTOP_HOME_PANEL_CLASS}>.pm-main-wrapper{flex:0 0 620px!important;width:620px!important;min-width:620px!important;max-width:620px!important}#preset-manager-main-panel .pm-panel-container.${DESKTOP_HOME_PANEL_CLASS}>.pm-main-wrapper>.preset-panel{width:100%!important;min-width:0!important;max-width:100%!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .header-left.${DESKTOP_HOME_TITLE_HOST_CLASS}{flex:0 0 208px!important;width:208px!important;min-width:208px!important;max-width:208px!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .header-left.${DESKTOP_HOME_TITLE_HOST_CLASS} .title-card{width:100%!important;min-width:0!important;max-width:100%!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS}{min-width:0!important;width:100%!important;max-width:100%!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS}>.title-actions{margin-left:-30px!important;gap:6px!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS}>.title-actions>.title-action-btn{flex:0 0 auto!important;white-space:nowrap!important}#preset-manager-main-panel .pm-panel-container>.pm-main-wrapper .pm-header .title-content.${HOME_TITLE_CLASS}>.title-row>.title-edit-btn{display:flex!important;visibility:visible!important;flex:0 0 20px!important;width:20px!important;min-width:20px!important}.title-content.${CAPTURE_TITLE_CLASS} .title-actions>[title="保存开关"],.title-content.${CAPTURE_TITLE_CLASS} .title-actions>[title^="同步开关"]{display:none!important}.title-content.${CAPTURE_TITLE_CLASS} .title-actions>.title-edit-btn.pmm-switch-snapshot-capture-save{display:flex!important}}`;
