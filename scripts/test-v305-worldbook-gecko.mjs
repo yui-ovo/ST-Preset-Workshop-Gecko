@@ -9,7 +9,7 @@ const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', im
 const toolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const bridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
 
-assert.equal(manifest.version, '3.1.17', 'Gecko 世界书版必须更新 manifest 版本');
+assert.equal(manifest.version, '3.1.18', 'Gecko 世界书版必须更新 manifest 版本');
 for (const marker of [
   "const appendRuntimeVersion = url =>",
   "url.searchParams.set('v', EXTENSION_VERSION)",
@@ -78,10 +78,17 @@ const nativeSnapshotEnd = worldbook.indexOf('  async function emitNativePresetDr
 const nativeSnapshot = worldbook.slice(nativeSnapshotStart, nativeSnapshotEnd);
 assert.ok(nativeSnapshot.includes('const panel = currentNativePresetPanel();'), 'Gecko 必须从当前左侧预设面板读取拖入目标');
 assert.ok(nativeSnapshot.includes('const draft = bridge?.snapshot?.();'), 'Gecko 必须读取工坊当前未保存草稿');
+assert.ok(nativeSnapshot.includes('draft?.complete === true'), 'Gecko 只能把已验证完整的实时草稿用于保存兜底');
+assert.ok(nativeSnapshot.includes('liveDraftAvailable = true;'), 'Gecko 必须明确记录实时完整草稿可用性');
 const nativeTransferStart = worldbook.indexOf('  async function transferToNativeTop(');
 const nativeTransferEnd = worldbook.indexOf('  async function transferWorldToWorld(', nativeTransferStart);
 const nativeTransfer = worldbook.slice(nativeTransferStart, nativeTransferEnd);
 assert.ok(nativeTransfer.indexOf('await enqueue(') < nativeTransfer.indexOf('const target = nativePresetSnapshot();'), 'Gecko 必须在排队操作执行时重新读取拖入目标');
+const fallbackGuard = nativeTransfer.indexOf('if (!hasVerifiedLivePresetDraft(target))');
+const directPresetSave = nativeTransfer.indexOf('await savePresetEntries(target.name');
+assert.ok(fallbackGuard >= 0, 'Gecko 直接保存预设前必须验证实时完整草稿');
+assert.ok(directPresetSave > fallbackGuard, 'Gecko 不得在实时草稿未验证时直接保存预设');
+assert.ok(nativeTransfer.includes("notify('error', '未取得当前预设的实时完整内容，已取消拖入以保护原预设');"), 'Gecko 无法验证草稿时必须取消拖入并保留原预设');
 
 for (const marker of [
   "const API_KEY = '__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__'",
@@ -96,7 +103,9 @@ for (const marker of [
   'dispatcherFromComponent(this.$)',
   'function componentHandlers(component)',
   'function dispatcherPriority(dispatcher, panel)',
+  'function currentPromptDraft(dispatcher)',
   'function snapshot()',
+  'complete: true,',
   'const bridge = { drop, snapshot, cleanup: () => {',
   'const vueTracker = installVueAppTracker();',
   'for (const owner of ownerWindows())',
@@ -177,6 +186,7 @@ promptPanel.props = liveProps;
 const liveSnapshot = bridgeWindow.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__.snapshot();
 assert.equal(liveSnapshot?.name, '连续草稿预设', 'Gecko 桥必须读取当前预设名称');
 assert.equal(liveSnapshot?.prompts?.some(prompt => prompt.id === 'user-target'), true, 'Gecko 桥必须读取未保存的新条目');
+assert.equal(liveSnapshot?.complete, true, 'Gecko 桥必须标记已读取到完整实时草稿');
 const bridgeResult = await bridgeWindow.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__.drop({
   entries: [{ id: 'world-entry' }],
   targetId: 'user-target',
@@ -196,6 +206,19 @@ const ambiguousResult = await bridgeWindow.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__.
 });
 assert.equal(ambiguousResult?.ok, false, '同名条目缺少稳定 ID 时必须安全取消');
 assert.equal(ambiguousResult?.reason, 'target-not-resolved', '同名条目缺少稳定 ID 时必须保留安全取消原因');
+
+// Empty is a valid preset, but an unreadable Vue component must never be
+// reported as an empty, saveable draft.
+const emptyProps = { prompts: [], side: 'left', onCrossPanelDrop: liveDrop };
+promptPanel.vnode.props = emptyProps;
+promptPanel.props = emptyProps;
+const emptySnapshot = bridgeWindow.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__.snapshot();
+assert.equal(emptySnapshot?.complete, true, 'Gecko 桥必须把可读取的空预设视为完整草稿');
+assert.equal(emptySnapshot?.prompts?.length, 0, 'Gecko 桥必须保留真实的空预设');
+const unreadableProps = { side: 'left', onCrossPanelDrop: liveDrop };
+promptPanel.vnode.props = unreadableProps;
+promptPanel.props = unreadableProps;
+assert.equal(bridgeWindow.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__.snapshot(), null, 'Gecko 桥读不到 prompts 时不得伪造空草稿');
 
 for (const marker of [
   'data-pmm-worldbook-placeholder',
@@ -221,4 +244,4 @@ for (const marker of [
   assert.ok(floating.includes(marker), `Gecko 桌面悬浮入口修复缺少实现：${marker}`);
 }
 
-console.log('Gecko v3.1.17 世界书拖入回归通过：连续换书后的未保存条目仍可作为稳定落点，旧处理器不会被复用。');
+console.log('Gecko v3.1.18 世界书拖入回归通过：连续换书后的未保存条目仍可作为稳定落点，旧处理器不会被复用。');

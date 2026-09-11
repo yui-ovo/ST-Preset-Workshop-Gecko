@@ -33,4 +33,4 @@ assert.ok(workshop.includes('@media (max-width:374px){'), '极窄屏标题适配
 assert.ok(workshop.includes('--pmm-title-viewport-width:130px!important'), '极窄屏没有为关闭键释放 20px');
 assert.ok(workshop.includes('function keepRuntimeFrameRenderable()'), '快照移植误伤 Gecko 运行时兼容补丁');
 
-console.log('Gecko v3.1.17 快照通过：手机浏览器跟随真实可视区，极窄屏为关闭键让出 20px，Gecko 补丁仍保留。');
+console.log('Gecko v3.1.18 快照通过：手机浏览器跟随真实可视区，极窄屏为关闭键让出 20px，Gecko 补丁仍保留。');

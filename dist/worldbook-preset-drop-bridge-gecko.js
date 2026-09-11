@@ -237,14 +237,20 @@
     return null;
   }
 
-  function currentPrompts(dispatcher) {
+  function currentPromptDraft(dispatcher) {
     for (let component = dispatcher?.component || null, depth = 0; component && depth < 24; depth++, component = component.parent) {
       const prompts = asArray(component.props?.prompts)
         || asArray(component.vnode?.props?.prompts)
         || asArray(component.setupState?.prompts);
-      if (prompts) return prompts;
+      // An empty array is a valid empty preset. `complete` distinguishes it
+      // from a component tree where prompts are simply not readable yet.
+      if (prompts) return { prompts, complete: true };
     }
-    return [];
+    return { prompts: [], complete: false };
+  }
+
+  function currentPrompts(dispatcher) {
+    return currentPromptDraft(dispatcher).prompts;
   }
 
   function currentPresetName() {
@@ -256,9 +262,13 @@
   function snapshot() {
     const dispatcher = findDispatcher();
     if (!dispatcher) return null;
+    const draft = currentPromptDraft(dispatcher);
+    const name = currentPresetName();
+    if (!draft.complete || !name) return null;
     return {
-      name: currentPresetName(),
-      prompts: currentPrompts(dispatcher),
+      name,
+      prompts: draft.prompts,
+      complete: true,
     };
   }
 
