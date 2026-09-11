@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-const source = await readFile(new URL('../dist/workshop-v2.54.js', import.meta.url), 'utf8');
+const source = (await readFile(new URL('../dist/workshop-v2.54.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 const marker = ';(()=>{\n  /* 预设工坊 × 柏宝箱：原子分支切换与完整分组快照 V2.54 */';
 const patchStart = source.lastIndexOf(marker);
 assert.notEqual(patchStart, -1, '找不到 v2.54 柏宝箱兼容补丁');

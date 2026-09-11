@@ -8,7 +8,10 @@ const presetEditor = await readFile(new URL('../dist/preset-content-editor.js', 
 const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', import.meta.url), 'utf8');
 const worldbookToolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const worldbookBridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
-const migrationBase = await readFile(new URL('../dist/workshop-v2.53.js', import.meta.url), 'utf8');
+// Git may materialize this legacy script as CRLF on Windows while the JSON
+// fixture keeps LF. Its content hash is intentionally platform-independent.
+const normalizeLineEndings = value => String(value).replace(/\r\n/g, '\n');
+const migrationBase = normalizeLineEndings(await readFile(new URL('../dist/workshop-v2.53.js', import.meta.url), 'utf8'));
 const bridge = await readFile(new URL('../bridge/predefine.js', import.meta.url), 'utf8');
 const scheduler = await readFile(new URL('../bridge/gecko-frame-scheduler.js', import.meta.url), 'utf8');
 const legacy = JSON.parse(await readFile(new URL('../legacy/🧩预设工坊｜双端适配v2.53.json', import.meta.url), 'utf8'));
@@ -33,7 +36,7 @@ if (workshop.length < 1_000_000 || !workshop.includes('V3.06 Gecko 已加载')) 
   throw new Error(`v3.06 Gecko 业务入口不完整：${workshop.length} 字符`);
 }
 
-if (!entry.includes('workshop-v3.08.js') || !entry.includes('preset-content-editor.js') || !entry.includes('worldbook-stitch-gecko.js') || !entry.includes("const EXTENSION_VERSION = '3.1.16'")) {
+if (!entry.includes('workshop-v3.08.js') || !entry.includes('preset-content-editor.js') || !entry.includes('worldbook-stitch-gecko.js') || !entry.includes("const EXTENSION_VERSION = '3.1.17'")) {
   throw new Error('扩展启动器没有指向 v3.06 Gecko、独立预设正文编辑器与世界书模块');
 }
 
@@ -54,7 +57,7 @@ if (!presetEditor.includes('openPresetContentEditor') || /worldbook|data-wb|pmm-
   throw new Error('独立预设正文编辑器缺失或混入了世界书功能');
 }
 
-if (legacy.content !== migrationBase) {
+if (normalizeLineEndings(legacy.content) !== migrationBase) {
   throw new Error('dist/workshop-v2.53.js 与原始 v2.53 JSON 内容不一致');
 }
 

@@ -9,7 +9,7 @@ const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', im
 const toolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const bridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
 
-assert.equal(manifest.version, '3.1.16', 'Gecko 世界书版必须更新 manifest 版本');
+assert.equal(manifest.version, '3.1.17', 'Gecko 世界书版必须更新 manifest 版本');
 for (const marker of [
   "const appendRuntimeVersion = url =>",
   "url.searchParams.set('v', EXTENSION_VERSION)",
@@ -36,6 +36,9 @@ for (const marker of [
   'data-wb-action="delete-entry"',
   'function worldToPreset(entry)',
   'SELF.top?.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__',
+  'function currentNativePresetPanel()',
+  'const panel = currentNativePresetPanel();',
+  'bridge?.snapshot?.()',
   'async function transferWorldToWorld(fromName, move, forcedKeys = null, placement = null)',
   'const IS_GECKO = /(?:Firefox|Fennec|GeckoView)/i.test',
   'function restoreGeckoThemeToggle(',
@@ -70,6 +73,15 @@ assert.ok(!compatibleNames.includes('worldNames.length'), 'Gecko 不得因 1.18 
 assert.equal(refreshNames.match(/await getWorldInfoNamesCompatible\(\)/g)?.length, 2, 'Gecko 初次读取和原生刷新后都必须使用兼容入口');
 assert.ok(!worldbook.includes('fallbackBaiBaiGroupedPresetDrop'), 'Gecko 的柏宝箱分组桥失败时不得直接写入局部预设数据');
 assert.ok(worldbook.includes("notify('error', '目标分组已识别，但未取得工坊拖入处理器；已取消拖入以避免条目掉到组外');"), 'Gecko 分组桥不可用时必须安全取消');
+const nativeSnapshotStart = worldbook.indexOf('  function nativePresetSnapshot()');
+const nativeSnapshotEnd = worldbook.indexOf('  async function emitNativePresetDrop(', nativeSnapshotStart);
+const nativeSnapshot = worldbook.slice(nativeSnapshotStart, nativeSnapshotEnd);
+assert.ok(nativeSnapshot.includes('const panel = currentNativePresetPanel();'), 'Gecko 必须从当前左侧预设面板读取拖入目标');
+assert.ok(nativeSnapshot.includes('const draft = bridge?.snapshot?.();'), 'Gecko 必须读取工坊当前未保存草稿');
+const nativeTransferStart = worldbook.indexOf('  async function transferToNativeTop(');
+const nativeTransferEnd = worldbook.indexOf('  async function transferWorldToWorld(', nativeTransferStart);
+const nativeTransfer = worldbook.slice(nativeTransferStart, nativeTransferEnd);
+assert.ok(nativeTransfer.indexOf('await enqueue(') < nativeTransfer.indexOf('const target = nativePresetSnapshot();'), 'Gecko 必须在排队操作执行时重新读取拖入目标');
 
 for (const marker of [
   "const API_KEY = '__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__'",
@@ -80,8 +92,12 @@ for (const marker of [
   'function findVueDispatcher()',
   'app.mixin({',
   'mounted() {',
+  'unmounted() {',
   'dispatcherFromComponent(this.$)',
-  'const mountedDispatcher = vueTracker?.dispatchers?.[vueTracker.dispatchers.length - 1];',
+  'function componentHandlers(component)',
+  'function dispatcherPriority(dispatcher, panel)',
+  'function snapshot()',
+  'const bridge = { drop, snapshot, cleanup: () => {',
   'const vueTracker = installVueAppTracker();',
   'for (const owner of ownerWindows())',
   'source.onCrossPanelDrop',
@@ -93,10 +109,24 @@ for (const marker of [
 
 let receivedDrop = null;
 let mountedHook = null;
-const nativeDrop = async (...args) => { receivedDrop = args; };
+let staleDropCalls = 0;
+let liveDropCalls = 0;
+const staleDrop = async (...args) => {
+  staleDropCalls += 1;
+  receivedDrop = args;
+};
+const liveDrop = async (...args) => {
+  liveDropCalls += 1;
+  receivedDrop = args;
+};
+const initialProps = {
+  prompts: [{ id: 'old-target', name: '旧世界书条目' }],
+  side: 'left',
+  onCrossPanelDrop: staleDrop,
+};
 const promptPanel = {
-  vnode: { props: { prompts: [{ id: 'target', name: '目标条目' }], onCrossPanelDrop: nativeDrop } },
-  props: { prompts: [{ id: 'target', name: '目标条目' }] },
+  vnode: { props: initialProps },
+  props: initialProps,
   attrs: {},
   subTree: null,
 };
@@ -105,12 +135,22 @@ const app = {
     vnode: { props: {} },
     props: {},
     attrs: {},
-    subTree: { component: promptPanel, props: { onCrossPanelDrop: nativeDrop }, children: [] },
+    subTree: { component: promptPanel, props: initialProps, children: [] },
   },
   mount() { return null; },
   mixin(options) { mountedHook = options?.mounted || null; },
 };
-const bridgeDocument = { querySelector: () => null };
+const titleSelect = { value: '连续草稿预设', selectedOptions: [] };
+const bridgeMainPanel = {
+  querySelector(selector) {
+    return selector === '.title-select' ? titleSelect : null;
+  },
+};
+const bridgeDocument = {
+  querySelector(selector) {
+    return selector.startsWith('#preset-manager-main-panel') ? bridgeMainPanel : null;
+  },
+};
 const bridgeWindow = { document: bridgeDocument, console, Vue: { createApp: () => app } };
 bridgeWindow.parent = bridgeWindow;
 bridgeWindow.top = bridgeWindow;
@@ -119,16 +159,43 @@ vm.runInNewContext(bridge, bridgeContext);
 bridgeWindow.Vue.createApp().mount();
 assert.equal(typeof mountedHook, 'function', 'Gecko Vue 应用桥必须注册组件挂载捕获器');
 mountedHook.call({ $: promptPanel });
+
+// Reproduce the reported sequence: the first worldbook has already inserted
+// entries without saving, then a lower-worldbook switch replaces the current
+// PromptPanel props. The bridge must use the live handler and live IDs.
+const liveProps = {
+  prompts: [
+    { id: 'user-first', name: 'user设定补充' },
+    { id: 'user-target', name: 'user设定补充' },
+    { id: 'glade-target', name: 'glade' },
+  ],
+  side: 'left',
+  onCrossPanelDrop: liveDrop,
+};
+promptPanel.vnode.props = liveProps;
+promptPanel.props = liveProps;
+const liveSnapshot = bridgeWindow.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__.snapshot();
+assert.equal(liveSnapshot?.name, '连续草稿预设', 'Gecko 桥必须读取当前预设名称');
+assert.equal(liveSnapshot?.prompts?.some(prompt => prompt.id === 'user-target'), true, 'Gecko 桥必须读取未保存的新条目');
 const bridgeResult = await bridgeWindow.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__.drop({
   entries: [{ id: 'world-entry' }],
-  targetId: 'target',
-  targetName: '目标条目',
+  targetId: 'user-target',
+  targetName: 'user设定补充',
   position: 'before',
   targetSectionId: 'baibai_group',
 });
 assert.equal(bridgeResult.ok, true, 'Gecko Vue 应用桥必须能找到原生拖入处理器');
-assert.equal(receivedDrop?.[1], 'target', 'Gecko Vue 应用桥必须传递目标条目');
+assert.equal(staleDropCalls, 0, 'Gecko 桥不得调用切换前捕获的旧拖入处理器');
+assert.equal(liveDropCalls, 1, 'Gecko 桥必须只调用一次当前拖入处理器');
+assert.equal(receivedDrop?.[1], 'user-target', 'Gecko Vue 应用桥必须传递未保存目标条目的稳定 ID');
 assert.equal(receivedDrop?.[3], 'baibai_group', 'Gecko Vue 应用桥必须传递柏宝箱目标分组');
+const ambiguousResult = await bridgeWindow.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__.drop({
+  entries: [{ id: 'world-entry-2' }],
+  targetName: 'user设定补充',
+  targetSectionId: 'baibai_group',
+});
+assert.equal(ambiguousResult?.ok, false, '同名条目缺少稳定 ID 时必须安全取消');
+assert.equal(ambiguousResult?.reason, 'target-not-resolved', '同名条目缺少稳定 ID 时必须保留安全取消原因');
 
 for (const marker of [
   'data-pmm-worldbook-placeholder',
@@ -154,4 +221,4 @@ for (const marker of [
   assert.ok(floating.includes(marker), `Gecko 桌面悬浮入口修复缺少实现：${marker}`);
 }
 
-console.log('v3.05 回归通过：Gecko 保留自身调度与触控补丁，并接入世界书草稿、条目排序、复制删除、预设拖入和桌面入口修复。');
+console.log('Gecko v3.1.17 世界书拖入回归通过：连续换书后的未保存条目仍可作为稳定落点，旧处理器不会被复用。');

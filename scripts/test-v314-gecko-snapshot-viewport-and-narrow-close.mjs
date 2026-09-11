@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const workshop = await readFile(new URL('../dist/workshop-v3.08.js', import.meta.url), 'utf8');
+const workshop = (await readFile(new URL('../dist/workshop-v3.08.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 const start = workshop.indexOf('PMM_SWITCH_SNAPSHOTS_GECKO_V313');
 assert.ok(start >= 0, '找不到 Gecko 开关快照模块');
 const snapshots = workshop.slice(start);
@@ -33,4 +33,4 @@ assert.ok(workshop.includes('@media (max-width:374px){'), '极窄屏标题适配
 assert.ok(workshop.includes('--pmm-title-viewport-width:130px!important'), '极窄屏没有为关闭键释放 20px');
 assert.ok(workshop.includes('function keepRuntimeFrameRenderable()'), '快照移植误伤 Gecko 运行时兼容补丁');
 
-console.log('Gecko v3.1.16 快照通过：手机浏览器跟随真实可视区，极窄屏为关闭键让出 20px，Gecko 补丁仍保留。');
+console.log('Gecko v3.1.17 快照通过：手机浏览器跟随真实可视区，极窄屏为关闭键让出 20px，Gecko 补丁仍保留。');

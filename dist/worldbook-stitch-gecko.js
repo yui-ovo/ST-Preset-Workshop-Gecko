@@ -840,7 +840,7 @@
   // to BaiBai's own Vue app, so always prefer PMM's PromptPanel: it owns the
   // cross-panel-drop listener that can preserve the target section id.
   function nativePresetDropDispatcher() {
-    const panel = state.nativeTop;
+    const panel = currentNativePresetPanel();
     if (!panel) return null;
     const seen = new Set();
     const roots = [panel, ...panel.querySelectorAll('.prompt-panel, .prompt-panel *')];
@@ -878,8 +878,17 @@
     return nativePresetDropDispatcher()?.component || null;
   }
 
+  function currentNativePresetPanel() {
+    // Vue may replace the left preset panel while it applies an unsaved cross-
+    // panel drop. Reacquire it before resolving a later target so the second
+    // worldbook can be dropped onto entries added by the first one.
+    const live = DOC.querySelector('#preset-manager-main-panel .pm-main-wrapper > .preset-panel');
+    if (live) state.nativeTop = live;
+    return state.nativeTop?.isConnected === false ? null : state.nativeTop;
+  }
+
   function nativePresetSnapshot() {
-    const panel = state.nativeTop;
+    const panel = currentNativePresetPanel();
     if (!panel) return { name: '', prompts: [], selected: new Set(), runtimePrompts: null, panelComponent: null, panelDropHandler: null };
     let prompts = null;
     let runtimePrompts = null;
@@ -912,6 +921,13 @@
     }
     const select = panel.querySelector('.title-select');
     const name = String(select?.value || select?.selectedOptions?.[0]?.textContent || getLoadedPresetNameSafe() || '').trim();
+    // The workshop owns unsaved additions. Gecko can briefly expose the prior
+    // component props after switching the lower worldbook, so ask the live
+    // bridge for the current preset draft before deciding a target ID is valid.
+    let bridge = SELF.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__;
+    try { bridge = bridge || TOP.__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__; } catch (_) {}
+    const draft = bridge?.snapshot?.();
+    if (draft?.name === name && Array.isArray(draft.prompts)) prompts = clone(draft.prompts);
     return { name, prompts, selected, runtimePrompts, panelComponent, panelDropHandler:dispatcher?.drop || null };
   }
 
@@ -1043,8 +1059,10 @@
     if (!keys.length) return notify('warning', '请先在下方世界书勾选需要缝合的条目');
     const entries = keys.map(key => findEntry(source, key)).filter(Boolean).map(clone);
     if (!entries.length) return;
-    const target = nativePresetSnapshot();
     await enqueue(move ? '移动到上方预设' : '复制到上方预设', async () => {
+      // Resolve immediately before the native handler runs. The lower panel can
+      // switch worlds between drag start and this queued operation.
+      const target = nativePresetSnapshot();
       const additions = entries.map(worldToPreset);
       if (await emitNativePresetDrop(target, additions, placement)) {
         if (move) {
