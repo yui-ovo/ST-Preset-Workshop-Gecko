@@ -1713,6 +1713,7 @@ async function ce(){
       else removeFab(doc);
     });
     docs.forEach(doc => ensureWorkshopControls(doc));
+    try { parentDoc?.dispatchEvent?.(new CustomEvent('pmm:fab-visibility-change', { detail:{ enabled:!!enabled } })); } catch (_) {}
     if (notify) {
       try {
         const toast = (typeof toastr !== 'undefined') ? toastr : window.parent?.toastr;
@@ -11213,6 +11214,8 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
   const LAYOUT_KEY = 'pmm_mobile_layout_shared_v2';
   const FAB_VISIBILITY_KEY = 'pmm_mobile_fab_visible_v1';
   const ROOT_SELECTOR = '#preset-manager-floating-panel .floating-panel-root';
+  const WORLDBOOK_SNAPSHOTS_KEY = '__PMM_WORLDBOOK_SNAPSHOTS__';
+  const FLOATING_BATCH_API = '__PMM_FLOATING_PANEL_BATCH__';
   const MutationObserverCtor = SELF.MutationObserver || TOP.MutationObserver || MutationObserver;
 
   let observers = [];
@@ -11222,6 +11225,9 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
   let batchDialogDocument = null;
   let batchViewportCleanup = null;
   let currentRoot = null;
+  let runtimeActive = false;
+  let visibilityListener = null;
+  const mobileBindings = new WeakMap();
 
   try { SELF[CLEANUP_KEY]?.(); } catch (_) {}
 
@@ -11532,52 +11538,41 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
     }
   }
 
+  function unbindMobileDrag(root) {
+    const binding=mobileBindings.get(root);
+    if(!binding)return;
+    for(const [target,type,handler,capture] of binding.listeners) target.removeEventListener(type,handler,capture);
+    mobileBindings.delete(root);
+    delete root.dataset.pmmFloatingDragBound;
+    delete root.dataset.pmmFloatingNativeMouseBound;
+    delete root.dataset.pmmFloatingClickBound;
+    delete root.dataset.pmmFloatingCollapseBound;
+    endActiveDrag();
+  }
+
   function bindMobileDrag(root) {
-    const targets = [
-      root.querySelector(':scope > .edge-tab'),
-      root.querySelector(':scope > .panel-wrapper > .panel-header'),
-    ].filter(Boolean);
-    for (const target of targets) {
-      if (target.dataset.pmmFloatingDragBound === '1') continue;
-      target.dataset.pmmFloatingDragBound = '1';
-      if ('PointerEvent' in SELF) target.addEventListener('pointerdown', event => beginMobileDrag(event, root), true);
-      /* iOS Safari 虽支持 PointerEvent，但贴边元素有时不会连续送达 pointermove；触摸事件作为拖动兜底。 */
-      target.addEventListener('touchstart', event => beginMobileDrag(event, root), { capture:true, passive:false });
+    if(mobileBindings.has(root))return;
+    const listeners=[];
+    const listen=(target,type,handler,options=false)=>{ target.addEventListener(type,handler,options);listeners.push([target,type,handler,typeof options==='object'?!!options.capture:!!options]); };
+    const targets=[root.querySelector(':scope > .edge-tab'),root.querySelector(':scope > .panel-wrapper > .panel-header')].filter(Boolean);
+    const start=event=>beginMobileDrag(event,root);
+    for(const target of targets) {
+      if ('PointerEvent' in SELF) listen(target,'pointerdown',start,true);
+      /* iOS Safari 的边缘元素保留触摸事件兜底。 */
+      listen(target,'touchstart',start,{capture:true,passive:false});
     }
-    const edge = root.querySelector(':scope > .edge-tab');
-    if (edge && edge.dataset.pmmFloatingNativeMouseBound !== '1') {
-      edge.dataset.pmmFloatingNativeMouseBound = '1';
-      edge.addEventListener('mousedown', event => {
-        if (!isMobile()) return;
-        /* 手机入口只由 pmm-floating-mobile-open 控制，阻止原组件再次切换内部展开状态。 */
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-      }, true);
+    const edge=root.querySelector(':scope > .edge-tab');
+    if(edge) {
+      const blockMouse=event=>{if(!isMobile())return;event.preventDefault();event.stopPropagation();event.stopImmediatePropagation();};
+      const open=event=>{if(!isMobile())return;event.preventDefault();event.stopPropagation();event.stopImmediatePropagation();if(Date.now()<Number(root.dataset.pmmSuppressFloatingClickUntil||0))return;root.classList.add('pmm-floating-mobile-open');};
+      listen(edge,'mousedown',blockMouse,true);listen(edge,'click',open,true);
     }
-    if (edge && edge.dataset.pmmFloatingClickBound !== '1') {
-      edge.dataset.pmmFloatingClickBound = '1';
-      edge.addEventListener('click', event => {
-        if (!isMobile()) return;
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-        if (Date.now() < Number(root.dataset.pmmSuppressFloatingClickUntil || 0)) return;
-        root.classList.add('pmm-floating-mobile-open');
-      }, true);
+    const collapse=root.querySelector(':scope > .panel-wrapper .panel-collapse');
+    if(collapse) {
+      const close=event=>{if(!isMobile())return;event.preventDefault();event.stopPropagation();event.stopImmediatePropagation();if(Date.now()<Number(root.dataset.pmmSuppressFloatingClickUntil||0))return;root.classList.remove('pmm-floating-mobile-open');};
+      listen(collapse,'click',close,true);
     }
-    const collapse = root.querySelector(':scope > .panel-wrapper .panel-collapse');
-    if (collapse && collapse.dataset.pmmFloatingCollapseBound !== '1') {
-      collapse.dataset.pmmFloatingCollapseBound = '1';
-      collapse.addEventListener('click', event => {
-        if (!isMobile()) return;
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-        if (Date.now() < Number(root.dataset.pmmSuppressFloatingClickUntil || 0)) return;
-        root.classList.remove('pmm-floating-mobile-open');
-      }, true);
-    }
+    mobileBindings.set(root,{listeners});
   }
 
   function syncSelectOptions(root) {
@@ -11762,9 +11757,10 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
     overlay.innerHTML = `
       <section class="pmm-preset-batch-dialog" role="dialog" aria-modal="true" aria-label="批量管理预设">
         <header class="pmm-preset-batch-head">
-          <span>批量管理预设</span>
+          <span>批量管理</span>
           <button type="button" data-pmm-preset-close aria-label="关闭">×</button>
         </header>
+        <nav class="pmm-preset-batch-tabs" aria-label="批量管理类别"><button type="button" data-pmm-batch-tab="preset" aria-selected="true"><i class="fa-solid fa-list"></i>预设</button><button type="button" data-pmm-batch-tab="worldbook" aria-selected="false"><i class="fa-solid fa-globe"></i>世界书</button></nav>
         <input type="search" class="pmm-preset-batch-search" data-pmm-preset-search placeholder="搜索预设" autocomplete="off" enterkeyhint="search" />
         <label class="pmm-preset-batch-all"><input type="checkbox" data-pmm-preset-all />全选</label>
         <div class="pmm-preset-batch-list"></div>
@@ -11798,6 +11794,12 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
     });
     overlay.querySelector('[data-pmm-preset-close]').addEventListener('click', closeBatchDialog);
     overlay.querySelector('[data-pmm-preset-cancel]').addEventListener('click', closeBatchDialog);
+    overlay.querySelector('[data-pmm-batch-tab="worldbook"]')?.addEventListener('click', () => {
+      closeBatchDialog();
+      const api=TOP[WORLDBOOK_SNAPSHOTS_KEY];
+      if(typeof api?.openBatch==='function') void api.openBatch(true);
+      else notify('warning','世界书模块正在加载，请稍后重试');
+    });
     overlay.querySelector('[data-pmm-preset-search]').addEventListener('input', () => filterBatchList(overlay));
     overlay.querySelector('[data-pmm-preset-all]').addEventListener('change', event => {
       for (const checkbox of overlay.querySelectorAll('[data-pmm-preset-choice]')) {
@@ -11813,6 +11815,30 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
     batchDialogDocument = ownerDocument;
     bindBatchToVisibleViewport(overlay, ownerDocument);
   }
+
+  function bindSnapshotHubTrigger(root) {
+    const header=root?.querySelector(':scope > .panel-wrapper > .panel-header');
+    const anchor=header?.querySelector('.panel-action[title="打开编辑面板"]');
+    if(!header || !anchor)return;
+    let trigger=header.querySelector('.pmm-floating-snapshot-trigger');
+    if(!trigger) {
+      trigger=header.ownerDocument.createElement('button');
+      trigger.type='button'; trigger.className='panel-action pmm-floating-snapshot-trigger';
+      trigger.title='快照中心'; trigger.setAttribute('aria-label','打开快照中心');
+      trigger.innerHTML='<i class="fa-solid fa-camera" aria-hidden="true"></i>';
+      anchor.insertAdjacentElement('afterend',trigger);
+    }
+    if(trigger.dataset.pmmSnapshotHubBound==='1')return;
+    trigger.dataset.pmmSnapshotHubBound='1';
+    trigger.addEventListener('click',event=>{
+      event.preventDefault();event.stopPropagation();
+      const api=TOP[WORLDBOOK_SNAPSHOTS_KEY];
+      if(typeof api?.openHub==='function') void api.openHub('preset');
+      else notify('warning','快照模块正在加载，请稍后重试');
+    });
+  }
+
+  TOP[FLOATING_BATCH_API] = { open: () => currentRoot ? openBatchDialog(currentRoot) : undefined };
 
   function bindBatchTrigger(root) {
     const icon = root?.querySelector('.panel-section .fa-sliders.section-icon');
@@ -11838,6 +11864,7 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
   function syncRoot(root) {
     if (!root) return;
     currentRoot = root;
+    bindSnapshotHubTrigger(root);
     bindBatchTrigger(root);
     bindPresetSwitchNotice(root);
     bindBranchSwitchNotice(root);
@@ -11846,18 +11873,23 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
     if (isMobile()) {
       const entryEnabled = floatingEntryEnabled();
       root.classList.toggle('pmm-floating-entry-disabled', !entryEnabled);
+      root.classList.add('pmm-floating-mobile');
+      if (!entryEnabled) {
+        root.classList.remove('pmm-floating-mobile-open', 'pmm-floating-dragging');
+        unbindMobileDrag(root);
+        return;
+      }
       if (root.dataset.pmmFloatingMobileInitialized !== '1') {
         const nativePanel = root.querySelector(':scope > .panel-wrapper');
         const nativeOpen = Boolean(nativePanel && SELF.getComputedStyle(nativePanel).display !== 'none');
         root.classList.toggle('pmm-floating-mobile-open', nativeOpen);
         root.dataset.pmmFloatingMobileInitialized = '1';
       }
-      if (!entryEnabled) root.classList.remove('pmm-floating-mobile-open', 'pmm-floating-dragging');
-      root.classList.add('pmm-floating-mobile');
       const saved = readPosition();
       setDock(root, root.dataset.pmmFloatingDock || saved.dock, parseFloat(root.style.getPropertyValue('--pmm-mobile-floating-top')) || saved.top, false);
       bindMobileDrag(root);
     } else {
+      unbindMobileDrag(root);
       root.classList.remove('pmm-floating-mobile', 'pmm-floating-mobile-open', 'pmm-floating-dock-left', 'pmm-floating-dock-right', 'pmm-floating-dragging', 'pmm-floating-entry-disabled');
       delete root.dataset.pmmFloatingMobileInitialized;
       root.style.removeProperty('--pmm-mobile-floating-top');
@@ -11890,6 +11922,12 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
   cursor:pointer!important;color:var(--fp-text-color)!important;opacity:.8!important;font-size:11px!important;
 }
 #preset-manager-floating-panel .pmm-preset-batch-trigger:hover{background:rgba(127,127,127,.08)!important;opacity:.92!important}
+#preset-manager-floating-panel .pmm-floating-snapshot-trigger{box-sizing:border-box!important;width:26px!important;height:26px!important;min-width:26px!important;min-height:26px!important;margin:0!important;padding:0!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;border:0!important;border-radius:5px!important;background:transparent!important;color:var(--fp-text-color)!important;cursor:pointer!important;opacity:.82!important;font-size:12px!important}
+#preset-manager-floating-panel .pmm-floating-snapshot-trigger:hover{background:rgba(127,127,127,.08)!important;opacity:1!important}
+.pmm-preset-batch-tabs{display:flex;gap:4px;padding:4px;border-radius:11px;background:rgba(127,127,127,.08)}
+.pmm-preset-batch-tabs button{flex:1;min-height:34px;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:13px}
+.pmm-preset-batch-tabs button[aria-selected="true"]{background:rgba(255,255,255,.34);box-shadow:0 1px 4px rgba(0,0,0,.08);font-weight:650}
+.pmm-preset-batch-tabs i{margin-right:5px;opacity:.72}
 .pmm-preset-batch-overlay{position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.38);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .pmm-preset-batch-dialog{box-sizing:border-box;width:min(420px,calc(100vw - 24px));max-height:min(620px,calc(100dvh - 32px));display:flex;flex-direction:column;gap:10px;padding:16px;border:1px solid var(--SmartThemeBorderColor,rgba(148,163,184,.34));border-radius:18px;background:var(--SmartThemeBlurTintColor,#f2f4f7);color:var(--SmartThemeBodyColor,#1f2937);box-shadow:0 18px 50px rgba(0,0,0,.3);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
 .pmm-preset-batch-head{display:flex;align-items:center;justify-content:space-between;font-size:15px;font-weight:650}
@@ -11941,6 +11979,7 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
   }
   html.pmm-mobile-toolbar-ready #pm-mobile-fab-standalone{display:none!important}
   #preset-manager-floating-panel .floating-panel-root.pmm-floating-entry-disabled{display:none!important;visibility:hidden!important;pointer-events:none!important}
+  html.pmm-floating-entry-off #preset-manager-floating-panel .floating-panel-root{display:none!important;visibility:hidden!important;pointer-events:none!important}
   #preset-manager-floating-panel .floating-panel-root.pmm-floating-mobile{
     position:fixed!important;top:var(--pmm-mobile-floating-top,38vh)!important;bottom:auto!important;
     width:auto!important;max-width:calc(100vw - 4px)!important;height:auto!important;z-index:80!important;
@@ -11981,32 +12020,66 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
     (targetDocument.head || targetDocument.documentElement).appendChild(style);
   }
 
-  function install() {
-    for (const currentDocument of documents()) installStyle(currentDocument);
-    observers = documents().map(currentDocument => {
-      const currentObserver = new MutationObserverCtor(scheduleSync);
-      currentObserver.observe(currentDocument.documentElement, { childList:true, subtree:true, attributes:true, attributeFilter:['style', 'class'] });
+  function disableFloatingEntryRoots() {
+    for(const currentDocument of documents()) {
+      currentDocument.documentElement?.classList.add('pmm-floating-entry-off');
+      for(const root of currentDocument.querySelectorAll(ROOT_SELECTOR)) {
+        root.classList.add('pmm-floating-entry-disabled');
+        root.classList.remove('pmm-floating-mobile-open','pmm-floating-dragging');
+        unbindMobileDrag(root);
+      }
+      currentDocument.documentElement?.classList.remove('pmm-mobile-toolbar-ready');
+    }
+  }
+
+  function stopRuntime() {
+    if(!runtimeActive) { disableFloatingEntryRoots(); return; }
+    runtimeActive=false;
+    endActiveDrag();
+    for(const currentObserver of observers) currentObserver.disconnect();
+    observers=[];
+    if(scheduled) SELF.cancelAnimationFrame ? SELF.cancelAnimationFrame(scheduled) : SELF.clearTimeout(scheduled);
+    scheduled=0;
+    if(MEDIA?.removeEventListener) MEDIA.removeEventListener('change',scheduleSync);
+    else MEDIA?.removeListener?.(scheduleSync);
+    SELF.removeEventListener('resize',scheduleSync);
+    disableFloatingEntryRoots();
+  }
+
+  function startRuntime() {
+    if(runtimeActive)return;
+    runtimeActive=true;
+    for(const currentDocument of documents()) currentDocument.documentElement?.classList.remove('pmm-floating-entry-off');
+    observers=documents().map(currentDocument=>{
+      const currentObserver=new MutationObserverCtor(scheduleSync);
+      currentObserver.observe(currentDocument.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['style','class']});
       return currentObserver;
     });
-    if (MEDIA?.addEventListener) MEDIA.addEventListener('change', scheduleSync);
+    if(MEDIA?.addEventListener) MEDIA.addEventListener('change',scheduleSync);
     else MEDIA?.addListener?.(scheduleSync);
-    SELF.addEventListener('resize', scheduleSync, { passive:true });
+    SELF.addEventListener('resize',scheduleSync,{passive:true});
     sync();
   }
 
+  function install() {
+    for(const currentDocument of documents()) installStyle(currentDocument);
+    visibilityListener=event=>{
+      const enabled=typeof event?.detail?.enabled==='boolean'?event.detail.enabled:floatingEntryEnabled();
+      if(enabled) startRuntime(); else stopRuntime();
+    };
+    DOC.addEventListener('pmm:fab-visibility-change',visibilityListener);
+    if(floatingEntryEnabled())startRuntime(); else stopRuntime();
+  }
+
   SELF[CLEANUP_KEY] = () => {
-    endActiveDrag();
     closeBatchDialog();
-    for (const currentObserver of observers) currentObserver.disconnect();
-    observers = [];
-    if (scheduled) SELF.cancelAnimationFrame ? SELF.cancelAnimationFrame(scheduled) : SELF.clearTimeout(scheduled);
-    scheduled = 0;
-    if (MEDIA?.removeEventListener) MEDIA.removeEventListener('change', scheduleSync);
-    else MEDIA?.removeListener?.(scheduleSync);
-    SELF.removeEventListener('resize', scheduleSync);
+    stopRuntime();
+    DOC.removeEventListener('pmm:fab-visibility-change',visibilityListener);
+    visibilityListener=null;
     for (const currentDocument of documents()) currentDocument.getElementById(STYLE_ID)?.remove();
     for (const currentDocument of documents()) currentDocument.documentElement?.classList.remove('pmm-mobile-toolbar-ready');
     currentRoot = null;
+    if (TOP[FLOATING_BATCH_API]?.open) delete TOP[FLOATING_BATCH_API];
     delete SELF[CLEANUP_KEY];
   };
 
@@ -15126,6 +15199,7 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
         <div class="pmm-switch-snapshot-first-default-actions"><button type="button" data-pmm-snapshot-action="cancel-default-onboarding">取消</button><button type="button" data-pmm-snapshot-action="save-default-and-enter"><i class="fa-solid fa-bookmark"></i>保存并进入</button></div>
       </div>
     </section>`;
+    try { TOP.__PMM_WORLDBOOK_SNAPSHOTS__?.decoratePreset?.(existing, TOP.__PMM_SNAPSHOT_HUB_PENDING__ === 'preset'); } catch (_) {}
   }
 
   function positionOpenSnapshotMenu(overlay) {
@@ -15266,6 +15340,7 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
       <footer class="pmm-switch-snapshot-footer"><span>快照保存条目开关与柏宝箱分组开关。</span><span>角色锁绑定当前角色，聊天锁绑定当前聊天；可通过「…」批量绑定多个角色；进入已绑定的角色或聊天时，会自动应用该快照。</span></footer>
       ${characterPickerMarkup}
     </section>`;
+    try { TOP.__PMM_WORLDBOOK_SNAPSHOTS__?.decoratePreset?.(existing, TOP.__PMM_SNAPSHOT_HUB_PENDING__ === 'preset'); } catch (_) {}
     if (openMenuId) positionOpenSnapshotMenu(existing);
     if (composer) {
       const focus = TOP.requestAnimationFrame || SELF.requestAnimationFrame || (callback => TOP.setTimeout(callback, 0));
