@@ -75,8 +75,9 @@ assert.ok(desktopStyle.includes('flex:0 0 28px!important;width:28px!important'),
 for (const forbidden of ['pmm-floating-snapshot-trigger', 'FLOATING_ENTRY_API_KEY', 'openWorkshopHome', 'pmm-desktop-title-width-handle']) {
   assert.ok(!snapshots.includes(forbidden), `Gecko 快照不应包含悬浮入口或已撤回的宽度手柄：${forbidden}`);
 }
-const openOverlay = section('function openOverlay()', 'function normalPresetContainer()');
-assert.ok(openOverlay.includes('开关快照仅可在主预设页面使用'), '非主页仍可能从 API 打开快照');
+const openOverlay = section('function openOverlay(options = undefined)', 'function normalPresetContainer()');
+assert.ok(openOverlay.includes('if (!hubRequested && !normalPresetContainer())'), '普通 API 入口在非主页没有保持拦截');
+assert.ok(openOverlay.includes('开关快照仅可在主预设页面使用'), '普通 API 入口缺少非主页提示');
 const captureEntry = section('async function enterCaptureModeFromOverlay()', 'function renderCaptureSavePrompt()');
 assert.ok(captureEntry.includes('快照仅可从主预设页面标题栏启动'), '录制入口仍能跨页面启动');
 

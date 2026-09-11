@@ -1,10 +1,10 @@
-import { requestSnapshotName } from './snapshot-name-dialog.js?v=3.1.20';
-import { createWorldbookSnapshots, copy } from './worldbook-snapshot-core.js?v=3.1.20';
+import { requestSnapshotName } from './snapshot-name-dialog.js?v=3.1.21';
+import { createWorldbookSnapshots, copy } from './worldbook-snapshot-core.js?v=3.1.21';
 
 const SELF = window, TOP = window.parent || window, DOC = TOP.document;
 const KEY = '__PMM_WORLDBOOK_SNAPSHOTS__';
 const STORAGE = 'pmm.test.worldbook-snapshots.v1';
-const PRESET = '__PMM_SWITCH_SNAPSHOTS_TEST52__';
+const PRESET = '__PMM_SWITCH_SNAPSHOTS_GECKO_V313__';
 const LAST_WORLD_TAB='pmm.snapshot.last-tab.v1';
 const NEW_GROUP_SNAPSHOT='__new_snapshot__';
 const HUB_PENDING='__PMM_SNAPSHOT_HUB_PENDING__';
@@ -408,15 +408,13 @@ function tabs(active, locked = false, includePreset = false) {
 async function openPresetHub() {
   TOP[HUB_PENDING]='preset';
   await close(true);
-  const trigger=DOC.querySelector('#preset-manager-floating-panel .panel-header > .panel-action[title="打开编辑面板"]');
-  try { trigger?.dispatchEvent(new TOP.MouseEvent('click',{bubbles:true,cancelable:true})); } catch (_) { trigger?.click?.(); }
-  for(let attempt=0;attempt<12;attempt++) {
-    await new Promise(resolve=>TOP.setTimeout(resolve,50));
-    const api=TOP[PRESET];
-    if(DOC.querySelector('#preset-manager-main-panel .pm-panel-container') && typeof api?.open==='function') { api.open(); return true; }
+  const api=TOP[PRESET];
+  if(typeof api?.open==='function') {
+    api.open({ hub:true });
+    return true;
   }
   delete TOP[HUB_PENDING];
-  TOP.toastr?.warning?.('暂时无法打开预设快照，请先打开预设管理页面后重试');
+  TOP.toastr?.warning?.('快照模块正在加载，请稍后重试');
   return false;
 }
 function decoratePreset(root, requested = false) {

@@ -15436,8 +15436,9 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
     return overlay;
   }
 
-  function openOverlay() {
-    if (!normalPresetContainer()) {
+  function openOverlay(options = undefined) {
+    const hubRequested = options === true || options?.hub === true || TOP.__PMM_SNAPSHOT_HUB_PENDING__ === 'preset';
+    if (!hubRequested && !normalPresetContainer()) {
       notify('warning', '开关快照仅可在主预设页面使用');
       return;
     }

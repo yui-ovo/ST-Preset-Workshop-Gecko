@@ -19,10 +19,18 @@ assert.match(workshop, /decoratePreset\?\.\(existing, TOP\.__PMM_SNAPSHOT_HUB_PE
 assert.match(worldbook, /const tabLabels = \{ preset: '预设', character: '角色世界书', global: '全局世界书' \}/);
 assert.match(worldbook, /function tabs\(active, locked = false, includePreset = false\)/);
 assert.match(worldbook, /async function openPresetHub\(\)/);
+assert.match(worldbook, /const PRESET = '__PMM_SWITCH_SNAPSHOTS_GECKO_V313__'/);
+assert.match(worldbook, /api\.open\(\{ hub:true \}\)/);
+assert.doesNotMatch(worldbook, /const trigger=DOC\.querySelector\('#preset-manager-floating-panel/);
+assert.doesNotMatch(worldbook, /暂时无法打开预设快照，请先打开预设管理页面后重试/);
 assert.match(worldbook, /openHub: scope => scope==='preset' \? openPresetHub\(\) : open\(scope,'',false,true\)/);
 assert.match(worldbook, /tabs\(page, !!editing, hubMode\)/);
 assert.match(worldbook, /data-batch-hub-tab="preset"/);
 assert.match(worldbook, /closest\('\[data-batch-action\],\[data-batch-hub-tab\]'\)/);
 assert.match(worldbook, /TOP\[FLOATING_BATCH_API\]\?\.open\?\.\(\)/);
 
-console.log('v3.1.20 Gecko floating snapshot hub and dormant-entry lifecycle checks passed.');
+assert.match(workshop, /function openOverlay\(options = undefined\)/);
+assert.match(workshop, /const hubRequested = options === true \|\| options\?\.hub === true \|\| TOP\.__PMM_SNAPSHOT_HUB_PENDING__ === 'preset'/);
+assert.match(workshop, /if \(!hubRequested && !normalPresetContainer\(\)\)/);
+
+console.log('v3.1.21 Gecko direct floating snapshot hub and dormant-entry lifecycle checks passed.');
