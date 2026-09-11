@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-const workshop = await readFile(new URL('../dist/workshop-v2.63.js', import.meta.url), 'utf8');
+const workshop = (await readFile(new URL('../dist/workshop-v2.63.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 
 for (const snippet of [
   'PMM_VARIABLE_MACRO_ASSISTANT_V263',

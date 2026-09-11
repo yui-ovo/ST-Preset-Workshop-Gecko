@@ -3090,7 +3090,20 @@
   DOC.addEventListener('touchmove', onGeckoWorldTouchMove, { capture:true, passive:false });
   DOC.addEventListener('touchend', onGeckoWorldTouchEnd, { capture:true, passive:false });
   DOC.addEventListener('touchcancel', onGeckoWorldTouchCancel, { capture:true, passive:false });
-  TOP[API_KEY] = { open, close, cleanup, state };
+  TOP[API_KEY] = { open, close, cleanup, state,
+    async refreshSnapshotBook(name, data, skipNative = false) {
+      if (!state.open) return;
+      saveScrolls();
+      for (const side of [state.top, state.bottom]) {
+        if (side.name !== name || side.dirty) continue;
+        applyWorldData(side, data);
+        side.savedData = clone(data);
+        side.history.length = 0;
+      }
+      renderPanels();
+      if (!skipNative) await reloadOpenNativeWorldbook(name);
+    },
+  };
   console.info('[预设工坊（Gecko兼容测试版）] 世界书已接入原生双卡片布局与条目落点排序。');
   console.info('[预设工坊（Gecko兼容测试版）] 世界书支持草稿保存、原生页刷新、角色搜索、查找替换与主题跟随。');
 })();

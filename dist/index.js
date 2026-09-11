@@ -1,5 +1,5 @@
 const EXTENSION_NAME = '🧩预设工坊（Gecko兼容测试版）';
-const EXTENSION_VERSION = '3.1.18';
+const EXTENSION_VERSION = '3.1.19';
 const RUNTIME_ID = 'TH-script--🧩预设工坊（Gecko 兼容扩展）--45dd76e4-8cce-41df-921f-9ebc856a9f25';
 const LEGACY_IFRAME_PREFIX = 'TH-script--🧩预设工坊';
 const EXTENSION_FOLDER_NAME = 'ST-Preset-Workshop-Gecko';
@@ -230,6 +230,7 @@ function buildRuntimeDocument() {
   const workshopUrl = appendRuntimeVersion(new URL('./workshop-v3.08.js', import.meta.url));
   const presetContentEditorUrl = appendRuntimeVersion(new URL('./preset-content-editor.js', import.meta.url));
   const worldbookStitchUrl = appendRuntimeVersion(new URL('./worldbook-stitch-gecko.js', import.meta.url));
+  const worldbookSnapshotsUrl = appendRuntimeVersion(new URL('./worldbook-snapshots.js', import.meta.url));
   const worldbookBridgeUrl = appendRuntimeVersion(new URL('./worldbook-preset-drop-bridge-gecko.js', import.meta.url));
   const worldbookToolbarUrl = appendRuntimeVersion(new URL('./worldbook-toolbar-entry-gecko.js', import.meta.url));
   const worldbookLoaderKey = '__PMM_LOAD_WORLDBOOK_STITCH__';
@@ -281,6 +282,7 @@ function buildRuntimeDocument() {
 })();
 </script>
 <script src="${worldbookBridgeUrl}"></script>
+<script type="module" src="${worldbookSnapshotsUrl}"></script>
 <script type="module" src="${workshopUrl}"></script>
 <script type="module" src="${presetContentEditorUrl}"></script>
 <script src="${worldbookToolbarUrl}"></script>

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-const source = await readFile(new URL('../dist/workshop-v2.73.js', import.meta.url), 'utf8');
+const source = (await readFile(new URL('../dist/workshop-v2.73.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 
 assert.ok(source.includes('function completePromptContentsInPanel(panel)'), '缺少完整预设数据读取');
 assert.ok(source.includes('component.props?.prompts'), '没有优先读取面板的完整 prompts 数据');

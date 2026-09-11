@@ -8,6 +8,9 @@ const presetEditor = await readFile(new URL('../dist/preset-content-editor.js', 
 const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', import.meta.url), 'utf8');
 const worldbookToolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const worldbookBridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
+const worldbookSnapshotCore = await readFile(new URL('../dist/worldbook-snapshot-core.js', import.meta.url), 'utf8');
+const worldbookSnapshots = await readFile(new URL('../dist/worldbook-snapshots.js', import.meta.url), 'utf8');
+const snapshotNameDialog = await readFile(new URL('../dist/snapshot-name-dialog.js', import.meta.url), 'utf8');
 // Git may materialize this legacy script as CRLF on Windows while the JSON
 // fixture keeps LF. Its content hash is intentionally platform-independent.
 const normalizeLineEndings = value => String(value).replace(/\r\n/g, '\n');
@@ -36,8 +39,8 @@ if (workshop.length < 1_000_000 || !workshop.includes('V3.06 Gecko 已加载')) 
   throw new Error(`v3.06 Gecko 业务入口不完整：${workshop.length} 字符`);
 }
 
-if (!entry.includes('workshop-v3.08.js') || !entry.includes('preset-content-editor.js') || !entry.includes('worldbook-stitch-gecko.js') || !entry.includes("const EXTENSION_VERSION = '3.1.18'")) {
-  throw new Error('扩展启动器没有指向 v3.06 Gecko、独立预设正文编辑器与世界书模块');
+if (!entry.includes('workshop-v3.08.js') || !entry.includes('preset-content-editor.js') || !entry.includes('worldbook-stitch-gecko.js') || !entry.includes('worldbook-snapshots.js') || !entry.includes("const EXTENSION_VERSION = '3.1.19'")) {
+  throw new Error('扩展启动器没有指向 Gecko 业务入口、预设编辑器、世界书补丁与世界书快照模块');
 }
 
 if (!workshop.includes('readPresetExtensionField?.({name:requested,path:PATH})')) {
@@ -76,6 +79,10 @@ if (!scheduler.includes('__PMM_GECKO_FRAME_SCHEDULER_V277__') || !entry.includes
 
 if (!worldbook.includes('function markWorldDraftDirty(side)') || !worldbook.includes('async function saveWorldSide(side)') || !worldbook.includes('await reloadOpenNativeWorldbook(side.name);')) {
   throw new Error('世界书草稿保存与原生页面同步模块不完整');
+}
+
+if (!worldbookSnapshotCore.includes('createWorldbookSnapshots') || !worldbookSnapshots.includes('__PMM_WORLDBOOK_SNAPSHOTS__') || !worldbookSnapshots.includes('__PMM_WORLDBOOK_STITCH_TEST3__') || !worldbookSnapshots.includes('可一键全局挂载世界书分组；也可为分组世界书创建快照。') || !snapshotNameDialog.includes('requestSnapshotName')) {
+  throw new Error('世界书快照模块不完整');
 }
 
 if (!worldbookToolbar.includes('data-pmm-worldbook-placeholder') || !worldbookToolbar.includes('打开世界书缝合')) {

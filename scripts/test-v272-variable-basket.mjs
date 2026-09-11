@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-const source = await readFile(new URL('../dist/workshop-v2.72.js', import.meta.url), 'utf8');
+const source = (await readFile(new URL('../dist/workshop-v2.72.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 
 assert.ok(!source.includes('收集本条已有变量'), 'S 菜单仍会整条收集旧变量');
 assert.ok(!source.includes("action === 'collect'"), 'S 菜单仍保留旧变量收集分支');
