@@ -9,7 +9,7 @@ const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', im
 const toolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
 const bridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
 
-assert.equal(manifest.version, '3.1.21', 'Gecko 世界书版必须更新 manifest 版本');
+assert.equal(manifest.version, '3.1.19', 'Gecko 世界书版必须更新 manifest 版本');
 for (const marker of [
   "const appendRuntimeVersion = url =>",
   "url.searchParams.set('v', EXTENSION_VERSION)",
@@ -244,4 +244,4 @@ for (const marker of [
   assert.ok(floating.includes(marker), `Gecko 桌面悬浮入口修复缺少实现：${marker}`);
 }
 
-console.log('Gecko v3.1.21 世界书拖入回归通过：连续换书后的未保存条目仍可作为稳定落点，旧处理器不会被复用。');
+console.log('Gecko v3.1.19 世界书拖入回归通过：连续换书后的未保存条目仍可作为稳定落点，旧处理器不会被复用。');

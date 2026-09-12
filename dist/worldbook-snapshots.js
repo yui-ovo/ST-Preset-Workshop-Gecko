@@ -1,14 +1,12 @@
-import { requestSnapshotName } from './snapshot-name-dialog.js?v=3.1.21';
-import { createWorldbookSnapshots, copy } from './worldbook-snapshot-core.js?v=3.1.21';
+import { requestSnapshotName } from './snapshot-name-dialog.js?v=3.1.19';
+import { createWorldbookSnapshots, copy } from './worldbook-snapshot-core.js?v=3.1.19';
 
 const SELF = window, TOP = window.parent || window, DOC = TOP.document;
 const KEY = '__PMM_WORLDBOOK_SNAPSHOTS__';
 const STORAGE = 'pmm.test.worldbook-snapshots.v1';
-const PRESET = '__PMM_SWITCH_SNAPSHOTS_GECKO_V313__';
+const PRESET = '__PMM_SWITCH_SNAPSHOTS_TEST52__';
 const LAST_WORLD_TAB='pmm.snapshot.last-tab.v1';
 const NEW_GROUP_SNAPSHOT='__new_snapshot__';
-const HUB_PENDING='__PMM_SNAPSHOT_HUB_PENDING__';
-const FLOATING_BATCH_API='__PMM_FLOATING_PANEL_BATCH__';
 function lastWorldTab() {
   try {
     const value=JSON.parse(TOP.localStorage.getItem(LAST_WORLD_TAB)||'null');
@@ -117,8 +115,8 @@ const engine = createWorldbookSnapshots({
 });
 
 let overlay = null, viewportCleanup = null, themeCleanup = null, busy = false, disposed = false;
-let batchOverlay = null, batchViewportCleanup = null, batchBooks = [], batchNames = [], batchSelected = new Set(), batchQuery = '', batchBusy = false, batchBoundExpanded = false, batchHub = false;
-let page = 'character', section = 'snapshots', book = '', books = [], items = [], draft = null, hubMode = false;
+let batchOverlay = null, batchViewportCleanup = null, batchBooks = [], batchNames = [], batchSelected = new Set(), batchQuery = '', batchBusy = false, batchBoundExpanded = false;
+let page = 'character', section = 'snapshots', book = '', books = [], items = [], draft = null;
 let picker = false, pickerReturnBook = '', editGroup = null, groupQuery = '', renameId = '', menuId = '', message = '', lastFocus = null;
 let eventSource = null, eventType = '', eventTimer = 0;
 let messageTimer=0;
@@ -386,7 +384,7 @@ style.textContent = `
 }
 `;
 DOC.head.append(style);
-const tabLabels = { preset: '预设', character: '角色世界书', global: '全局世界书' };
+const tabLabels = { character: '角色世界书', global: '全局世界书' };
 function icon(name) {
   const paths = {
     camera: '<path d="M8 5l1-2h6l1 2h4v14H4V5z"/><circle cx="12" cy="12" r="4"/>',
@@ -401,43 +399,15 @@ function icon(name) {
   };
   return `<svg class="pmm-wbs-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.camera}</svg>`;
 }
-function tabs(active, locked = false, includePreset = false) {
-  const entries=Object.entries(tabLabels).filter(([key])=>includePreset || key!=='preset');
-  return `<nav class="pmm-snapshot-tabs" aria-label="快照分类">${entries.map(([key, label]) => `<button type="button" data-hub-tab="${key}" aria-selected="${key === active}"${locked ? ' disabled' : ''}>${icon(key)}<span>${label}</span></button>`).join('')}</nav>`;
+function tabs(active, locked = false) {
+  return `<nav class="pmm-snapshot-tabs" aria-label="快照分类">${Object.entries(tabLabels).map(([key, label]) => `<button type="button" data-hub-tab="${key}" aria-selected="${key === active}"${locked ? ' disabled' : ''}>${icon(key)}<span>${label}</span></button>`).join('')}</nav>`;
 }
-async function openPresetHub() {
-  TOP[HUB_PENDING]='preset';
-  await close(true);
-  const api=TOP[PRESET];
-  if(typeof api?.open==='function') {
-    api.open({ hub:true });
-    return true;
-  }
-  delete TOP[HUB_PENDING];
-  TOP.toastr?.warning?.('快照模块正在加载，请稍后重试');
-  return false;
-}
-function decoratePreset(root, requested = false) {
+function decoratePreset(root) {
   const dialog = root?.querySelector('.pmm-switch-snapshot-dialog');
-  const active=!!requested || root?.dataset?.pmmSnapshotHub==='1';
-  if (!dialog || !active) return;
-  delete TOP[HUB_PENDING];
-  root.dataset.pmmSnapshotHub='1';
+  if (!dialog) return;
   root.classList.add('pmm-snapshot-hub-preset');
   theme(root);
   dialog.querySelector('.pmm-snapshot-tabs')?.remove();
-  dialog.querySelector('.pmm-switch-snapshot-head')?.insertAdjacentHTML('afterend',tabs('preset',false,true));
-  if(root.dataset.pmmSnapshotHubBound==='1') return;
-  root.dataset.pmmSnapshotHubBound='1';
-  root.addEventListener('click',event=>{
-    const target=event.target.closest?.('[data-hub-tab]');
-    if(!target || target.dataset.hubTab==='preset') return;
-    const next=target.dataset.hubTab;
-    if(!['character','global'].includes(next))return;
-    event.preventDefault();event.stopPropagation();
-    root.querySelector('[data-pmm-snapshot-action="close"]')?.click();
-    void open(next,'',false,true);
-  },true);
 }
 function theme(target = overlay) {
   if (!target) return;
@@ -604,7 +574,6 @@ function renderBatch(preserveScroll=false) {
   const boundSection=`<section class="pmm-wbs-batch-section" data-batch-section="bound"><button type="button" class="pmm-wbs-batch-section-toggle" data-batch-action="toggle-bound" aria-expanded="${batchBoundExpanded}"><span>角色绑定世界书 · ${bound.length} 本</span><i class="fa-solid fa-chevron-down"></i></button><div class="pmm-wbs-batch-bound-list" ${batchBoundExpanded?'':'hidden'}>${bound.map(rowMarkup).join('')}</div></section>`;
   batchOverlay.innerHTML=`<section class="pmm-wbs-dialog pmm-wbs-batch-dialog" role="dialog" aria-modal="true" aria-label="批量管理世界书">
     <header class="pmm-wbs-head"><div><h2><i class="fa-solid fa-list-check"></i> 批量管理世界书</h2><p>搜索、多选并删除世界书</p></div><button type="button" class="pmm-wbs-icon" data-batch-action="close" aria-label="关闭"><i class="fa-solid fa-xmark"></i></button></header>
-    ${batchHub?`<nav class="pmm-snapshot-tabs pmm-batch-tabs" aria-label="批量管理类别"><button type="button" data-batch-hub-tab="preset" aria-selected="false">${icon('preset')}<span>预设</span></button><button type="button" data-batch-hub-tab="worldbook" aria-selected="true">${icon('global')}<span>世界书</span></button></nav>`:''}
     <div class="pmm-wbs-body"><div class="pmm-wbs-batch-tools"><input class="pmm-wbs-batch-search" type="search" value="${h(batchQuery)}" placeholder="搜索世界书" aria-label="搜索世界书"><button type="button" class="pmm-wbs-batch-select-all" data-batch-action="select-all">全选</button></div>
       <div class="pmm-wbs-batch-list">${openSection}${boundSection}<div class="pmm-wbs-empty pmm-wbs-batch-empty" hidden>没有匹配的世界书</div></div></div>
     <footer class="pmm-wbs-foot"><small>已选择 ${batchSelected.size} 本；删除不可撤销</small><button type="button" data-batch-action="close">取消</button><button type="button" class="pmm-wbs-danger" data-batch-action="delete" ${batchSelected.size&&!batchBusy?'':'disabled'}>${batchBusy?'正在删除…':'批量删除'}</button></footer>
@@ -654,7 +623,7 @@ function filterBatchRows() {
 }
 function closeBatch() {
   batchViewportCleanup?.(); batchViewportCleanup=null;
-  batchOverlay?.remove(); batchOverlay=null; batchBooks=[]; batchNames=[]; batchSelected.clear(); batchQuery=''; batchBusy=false;batchBoundExpanded=false;batchHub=false;
+  batchOverlay?.remove(); batchOverlay=null; batchBooks=[]; batchNames=[]; batchSelected.clear(); batchQuery=''; batchBusy=false;batchBoundExpanded=false;
 }
 async function deleteBatchSelection() {
   if(batchBusy || !batchSelected.size)return;
@@ -680,17 +649,14 @@ async function deleteBatchSelection() {
     else TOP.toastr?.success?.(`已删除 ${names.length} 本世界书，并同步清理分组引用`);
   } finally { batchBusy=false; renderBatch(true); }
 }
-async function openBatch(hub = false) {
+async function openBatch() {
   if(batchOverlay)return;
-  batchHub=hub;
   batchBooks=await catalog();batchNames=batchBooks.map(row=>row.name);batchSelected.clear();batchQuery='';batchBoundExpanded=false;
   batchOverlay=DOC.createElement('div');batchOverlay.className='pmm-wbs-overlay pmm-wbs-batch-overlay';
   batchOverlay.addEventListener('input',event=>{ if(event.target.matches('.pmm-wbs-batch-search')) { batchQuery=event.target.value;filterBatchRows(); } });
   batchOverlay.addEventListener('click',event=>{
-    const target=event.target.closest('[data-batch-action],[data-batch-hub-tab]');if(!target || target.disabled)return;
+    const target=event.target.closest('[data-batch-action]');if(!target || target.disabled)return;
     event.preventDefault();event.stopPropagation();
-    const hubTab=target.dataset.batchHubTab;
-    if(hubTab==='preset') { closeBatch(); void TOP[FLOATING_BATCH_API]?.open?.(); return; }
     const action=target.dataset.batchAction;
     if(action==='close')closeBatch();
     else if(action==='toggle') { const name=target.dataset.book;batchSelected.has(name)?batchSelected.delete(name):batchSelected.add(name);updateBatchRow(name);updateBatchFooter(); }
@@ -894,7 +860,7 @@ function render() {
     : picker ? sourceMarkup() : section === 'groups' ? groupMarkup() : snapshotMarkup();
   overlay.innerHTML = `<section class="pmm-wbs-dialog pmm-switch-snapshot-dialog${editing ? ' is-editing' : ''}" role="dialog" aria-modal="true" aria-label="世界书快照">
     <header class="pmm-wbs-head pmm-switch-snapshot-head"><div><h2><i class="fa-solid fa-camera"></i>${draft ? '调整开关' : editGroup ? '世界书分组' : '世界书快照'}</h2><p>${h(character()?.name || '酒馆主页')}</p></div>${button('close', '<i class="fa-solid fa-xmark"></i>', 'class="pmm-wbs-icon pmm-switch-snapshot-close" aria-label="关闭"')}</header>
-    ${tabs(page, !!editing, hubMode)}<div class="pmm-wbs-message" data-message role="status" ${message ? '' : 'hidden'}><span>${h(message)}</span>${button('dismiss-message','×','aria-label="关闭提示"')}</div>
+    ${tabs(page, !!editing)}<div class="pmm-wbs-message" data-message role="status" ${message ? '' : 'hidden'}><span>${h(message)}</span>${button('dismiss-message','×','aria-label="关闭提示"')}</div>
     <div class="pmm-wbs-body${page==='character'&&!editing&&!picker?' is-character-snapshots':''}${draft?' is-draft':''}${page==='global'&&section==='groups'&&!editing&&!picker?' is-group-home':''}${editGroup?' is-group-editor':''}">${content}</div>
     <footer class="pmm-wbs-foot"><small>${draft ? (page==='character'?'只保存开关；聊天锁或“应用”才会应用。':'保存方案不挂载世界书；请在分组中选用。') : page==='global' ? '可一键全局挂载世界书分组；也可为分组世界书创建快照。' : '聊天锁自动应用 · 返回主页恢复进入前状态'}</small>${editing ? button('cancel-edit', '取消') + button(draft ? 'save-draft' : editGroup ? 'save-group' : 'save-rename', '保存', 'class="pmm-wbs-primary"') : ''}</footer>
     </section>`;
@@ -925,11 +891,10 @@ function positionMenu() {
 async function loadItems() {
   items = [];
 }
-async function open(scope = 'character', selected = '', restore = true, hub = false) {
+async function open(scope = 'character', selected = '', restore = true) {
   if (disposed) return;
   if (TOP[PRESET]?.isCapturing?.()) { TOP.toastr?.info?.('请先保存或取消预设快照'); return; }
   if (overlay) return;
-  hubMode=hub;
   const last=restore?lastWorldTab():null;
   TOP[PRESET]?.close?.();
   page=last?.page || (scope==='global'?'global':'character');
@@ -970,7 +935,7 @@ async function cancelEdit() {
 async function close(force = false) {
   if (!force && busy) return;
   if (!force && (draft || editGroup || renameId) && !TOP.confirm('放弃尚未保存的编辑并关闭？')) return;
-  draft = null; editGroup = null; groupQuery=''; renameId = ''; menuId = ''; hubMode=false;
+  draft = null; editGroup = null; groupQuery=''; renameId = ''; menuId = '';
   TOP.clearTimeout(messageTimer);messageTimer=0;message='';
   engine.setCapturing(false);
   viewportCleanup?.(); viewportCleanup = null;
@@ -1217,7 +1182,7 @@ function cleanup() {
   closeBatch();void close(true); style.remove();
   if (TOP[KEY]?.engine === engine) delete TOP[KEY];
 }
-TOP[KEY] = { open, openBatch, openHub: scope => scope==='preset' ? openPresetHub() : open(scope,'',false,true), decoratePreset, engine, cleanup, onChatChanged };
+TOP[KEY] = { open, openBatch, decoratePreset, engine, cleanup, onChatChanged };
 syncListener();
 installNativeWorldbookTools();
 // The persisted return journal also handles a browser refresh while inside a character.
