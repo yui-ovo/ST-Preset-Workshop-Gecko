@@ -1,5 +1,5 @@
-import { requestSnapshotName } from './snapshot-name-dialog.js?v=3.1.19';
-import { createWorldbookSnapshots, copy } from './worldbook-snapshot-core.js?v=3.1.19';
+import { requestSnapshotName } from './snapshot-name-dialog.js?v=3.1.20';
+import { createWorldbookSnapshots, copy } from './worldbook-snapshot-core.js?v=3.1.20';
 
 const SELF = window, TOP = window.parent || window, DOC = TOP.document;
 const KEY = '__PMM_WORLDBOOK_SNAPSHOTS__';
@@ -75,16 +75,32 @@ function chat() {
   const context=ctx();
   return String(context.chatId ?? context.chat_id ?? TOP.chat_id ?? SELF.chat_id ?? context.getCurrentChatId?.() ?? '');
 }
-async function catalog() {
-  const names = await helper('getWorldbookNames')();
-  const globals = await helper('getGlobalWorldbookNames')();
+const CATALOG_BINDING_CONCURRENCY=4;
+async function boundedMap(values,limit,mapper) {
+  const output=new Array(values.length);let cursor=0;
+  const worker=async()=>{
+    while(cursor<values.length) {
+      const index=cursor++;
+      output[index]=await mapper(values[index],index);
+    }
+  };
+  await Promise.all(Array.from({length:Math.min(limit,values.length)},worker));
+  return output;
+}
+async function catalog(scope = '', owner = '') {
+  const [rawNames,rawGlobals] = await Promise.all([
+    helper('getWorldbookNames')(),
+    helper('getGlobalWorldbookNames')(),
+  ]);
+  const names=(rawNames||[]).map(String),globals=(rawGlobals||[]).map(String);
   const linked = new Map(names.map(name => [name, []]));
   const normalize = name => String(name || '').normalize('NFC').trim().toLocaleLowerCase();
   const lookup = new Map(names.map(name => [normalize(name), name]));
   // The helper reads primary AND additional bindings. Fail closed on partial reads.
   const getBindings = helper('getCharWorldbookNames');
-  for (const c of characters()) {
-    const bindings = await getBindings(c.name);
+  const candidates=scope==='names' ? [] : scope==='character' ? characters().filter(c=>c.key===owner) : characters();
+  const bindingsByCharacter=await boundedMap(candidates,CATALOG_BINDING_CONCURRENCY,async c=>({c,bindings:await getBindings(c.name)}));
+  for (const {c,bindings} of bindingsByCharacter) {
     for (const raw of [bindings?.primary, ...(bindings?.additional || [])]) {
       const name = linked.has(raw) ? raw : lookup.get(normalize(raw));
       if (name && !linked.get(name).some(row => row.key === c.key)) linked.get(name).push(c);
@@ -283,13 +299,12 @@ style.textContent = `
 .pmm-wbs-dialog select.pmm-wbs-plan { width:auto; min-width:65px; max-width:100%; margin:0; color:var(--wbs-ink); background:var(--wbs-raised); border:1px solid var(--wbs-line); border-radius:10px; font:inherit; padding:5px 7px; text-overflow:ellipsis; }
 .pmm-wbs-plan option { color:var(--wbs-ink); background:var(--pm-panel-bg); }
 .pmm-wbs-book { display:block!important; margin:8px 0; border:1px solid var(--wbs-line); border-radius:12px; overflow:hidden; }
-.pmm-wbs-book>summary { display:flex!important; align-items:center; gap:8px; padding:12px 9px; cursor:pointer; list-style:none; background:var(--wbs-raised); }
-.pmm-wbs-book>summary::-webkit-details-marker { display:none; }
-.pmm-wbs-book>summary .pmm-wbs-svg { width:14px; height:14px; transition:transform .12s; }
-.pmm-wbs-book[open]>summary .pmm-wbs-svg { transform:rotate(90deg); }
+.pmm-wbs-book>.pmm-wbs-book-head { display:flex!important; align-items:center; gap:8px; width:100%; min-height:0!important; padding:12px 9px!important; border:0!important; border-radius:0!important; background:var(--wbs-raised)!important; box-shadow:none!important; color:inherit; text-align:left; }
+.pmm-wbs-book>.pmm-wbs-book-head .pmm-wbs-svg { width:14px; height:14px; transition:none; }
+.pmm-wbs-book>.pmm-wbs-book-head[aria-expanded="true"] .pmm-wbs-svg { transform:rotate(90deg); }
 .pmm-wbs-book-title { flex:1; min-width:0; overflow-wrap:anywhere; }
-.pmm-wbs-book>summary small { margin:0; white-space:nowrap; }
-.pmm-wbs-book:not([open])>.pmm-wbs-book-entries { display:none!important; }
+.pmm-wbs-book>.pmm-wbs-book-head small { margin:0; white-space:nowrap; }
+.pmm-wbs-book>.pmm-wbs-book-entries[hidden] { display:none!important; }
 .pmm-wbs-entry-block { content-visibility:auto; contain-intrinsic-size:auto 50px; }
 .pmm-wbs-batch-row { content-visibility:auto; contain-intrinsic-size:auto 44px; }
 .pmm-wbs-row { content-visibility:auto; contain-intrinsic-size:auto 70px; }
@@ -556,8 +571,9 @@ async function reconcileCatalogNames(names = null) {
   }
   return { names: current, result };
 }
-async function refresh() {
-  books = await catalog();
+async function refresh(full = false) {
+  const current=character();
+  books = await (full ? catalog() : current ? catalog('character',current.key) : catalog('names'));
   await engine.reconcileBooks(books.map(row => row.name));
 }
 function batchVisibleNames() {
@@ -728,13 +744,16 @@ function scopeOwner() { return page === 'character' ? character()?.key || '' : b
 function bundleScope() { return page === 'character' ? 'character' : 'group'; }
 async function beginNewSnapshot() {
   if (TOP[PRESET]?.isCapturing?.()) throw new Error('请先完成预设快照');
-  say(''); engine.setCapturing(true);
+  say('正在读取世界书开关…',true); engine.setCapturing(true);
   try {
+    render();
+    await new Promise(resolve=>scheduleBookEntryRender(resolve));
     const scope=bundleScope(),owner=scopeOwner();
     const captured=await engine.captureBundle(scope,owner);
     const label=page==='character'?character().name:engine.read().groups.find(g=>g.id===owner)?.name;
     if(!label)throw new Error('分组已不存在');
     draft={...captured,scope,owner,name:`${label} 开关`,expanded:Object.fromEntries(Object.keys(captured.data).map(name=>[name,Object.keys(captured.data).length===1])),queries:{},previews:{}};
+    say('');
   } catch(error) { engine.setCapturing(false); await engine.transition(); throw error; }
 }
 function sourceMarkup() {
@@ -796,28 +815,53 @@ function groupMarkup() {
       +(menuId===group.id?'<div class="pmm-wbs-menu">'+button('edit-group','编辑分组',attrs)+button('manage-snapshots','管理分组快照',attrs)+button('delete-group','删除分组',attrs)+'</div>':'')+'</article>';
   }).join('');
 }
-function bookEntriesMarkup(name, data) {
-  return Object.values(data.entries).sort((a,b)=>Number(a.displayIndex??a.uid)-Number(b.displayIndex??b.uid)).map(entry=>{
+const BOOK_ENTRY_INITIAL_BATCH_SIZE=2;
+const BOOK_ENTRY_RENDER_BATCH_SIZE=8;
+let bookEntryRenderId=0;
+function orderedBookEntries(data) {
+  return Object.values(data?.entries||{}).sort((a,b)=>Number(a.displayIndex??a.uid)-Number(b.displayIndex??b.uid));
+}
+function bookEntriesMarkup(name, entries) {
+  return entries.map(entry=>{
     const title=entry.comment||entry.key?.[0]||'条目 '+entry.uid,shown=!!draft.previews?.[name]?.[String(entry.uid)];
     return '<div class="pmm-wbs-entry-block" data-entry-title="'+h(String(title).toLocaleLowerCase())+'"><div class="pmm-wbs-entry">'+button('preview-entry',icon('arrow')+'<span>'+h(title)+'</span>','class="pmm-wbs-entry-title" data-preview-entry data-preview-book="'+h(name)+'" data-preview-uid="'+h(entry.uid)+'" aria-expanded="'+shown+'"')+'<label class="pmm-wbs-entry-switch"><input class="pmm-wbs-entry-switch-input" type="checkbox" data-toggle="'+h(entry.uid)+'" data-toggle-book="'+h(name)+'" aria-label="'+h(title)+'" style="opacity:0!important" '+(entry.disable?'':'checked')+'><span class="pmm-wbs-entry-switch-track" aria-hidden="true"></span></label></div><div class="pmm-wbs-entry-preview" hidden></div></div>';
-  }).join('')+(!Object.keys(data.entries).length?'<small>这本世界书暂无条目</small>':'');
+  }).join('');
 }
-function ensureBookEntries(details) {
-  if(!draft || !details)return;
-  const name=details.dataset.draftBook;
-  const container=details.querySelector('.pmm-wbs-book-entries');
-  if(!container || container.dataset.rendered)return;
-  container.insertAdjacentHTML('beforeend',bookEntriesMarkup(name,draft.data[name]));
-  container.dataset.rendered='1';
-  filterDraft(name);
+function scheduleBookEntryRender(callback) {
+  if(typeof TOP.requestAnimationFrame==='function')TOP.requestAnimationFrame(callback);
+  else TOP.setTimeout(callback,16);
+}
+function ensureBookEntries(bookBlock) {
+  if(!draft || !bookBlock)return;
+  const name=bookBlock.dataset.draftBook;
+  const container=bookBlock.querySelector('.pmm-wbs-book-entries');
+  const data=draft.data[name];
+  if(!container || !data || container.dataset.rendered || container.dataset.rendering)return;
+  const entries=orderedBookEntries(data),renderId=String(++bookEntryRenderId);
+  let offset=Math.min(Number(container.dataset.renderedCount)||0,entries.length);
+  container.dataset.rendering=renderId;
+  const stop=()=>{if(container.dataset.rendering===renderId)delete container.dataset.rendering;};
+  const renderBatch=batchSize=>{
+    if(!draft || draft.data[name]!==data || !overlay?.contains(container) || container.dataset.rendering!==renderId){stop();return;}
+    if(!draft.expanded[name]){stop();return;}
+    if(!entries.length)container.insertAdjacentHTML('beforeend','<small>这本世界书暂无条目</small>');
+    else {
+      const next=Math.min(offset+batchSize,entries.length);
+      container.insertAdjacentHTML('beforeend',bookEntriesMarkup(name,entries.slice(offset,next)));
+      offset=next;container.dataset.renderedCount=String(offset);
+    }
+    if(offset>=entries.length) {
+      container.dataset.rendered='1';stop();filterDraft(name);return;
+    }
+    filterDraft(name);scheduleBookEntryRender(()=>renderBatch(BOOK_ENTRY_RENDER_BATCH_SIZE));
+  };
+  renderBatch(BOOK_ENTRY_INITIAL_BATCH_SIZE);
 }
 function draftMarkup() {
   return '<small>共 '+Object.keys(draft.data).length+' 本世界书 · 点击书名展开或收起</small><div data-entries>'
     +Object.entries(draft.data).map(([name,data])=>{
       const isOpen=!!draft.expanded[name];
-      const entriesContent=isOpen?bookEntriesMarkup(name,data):'';
-      const rendered=isOpen?' data-rendered="1"':'';
-      return '<details class="pmm-wbs-book" data-draft-book="'+h(name)+'" '+(isOpen?'open':'')+'><summary>'+icon('arrow')+'<span class="pmm-wbs-book-title">'+h(name)+'</span><small>'+Object.keys(data.entries).length+' 条</small></summary><div class="pmm-wbs-book-entries"'+rendered+'><input class="pmm-wbs-book-search" type="search" data-filter-book="'+h(name)+'" value="'+h(draft.queries?.[name]||'')+'" placeholder="搜索条目名称" aria-label="搜索 '+h(name)+' 的条目">'+entriesContent+'</div></details>';
+      return '<section class="pmm-wbs-book" data-draft-book="'+h(name)+'" data-open="'+isOpen+'"><button type="button" class="pmm-wbs-book-head" data-wbs="toggle-draft-book" data-book="'+h(name)+'" aria-expanded="'+isOpen+'">'+icon('arrow')+'<span class="pmm-wbs-book-title">'+h(name)+'</span><small>'+Object.keys(data.entries).length+' 条</small></button><div class="pmm-wbs-book-entries" '+(isOpen?'':'hidden')+'><input class="pmm-wbs-book-search" type="search" data-filter-book="'+h(name)+'" value="'+h(draft.queries?.[name]||'')+'" placeholder="搜索条目名称" aria-label="搜索 '+h(name)+' 的条目"></div></section>';
     }).join('')+'</div>';
 }
 function groupEditorMarkup() {
@@ -869,6 +913,7 @@ function render() {
   syncGroupSave();
   sizeGroupPlanSelects();
   positionMenu();
+  if(draft)for(const bookBlock of overlay.querySelectorAll('[data-draft-book][data-open="true"]'))ensureBookEntries(bookBlock);
 }
 function positionMenu() {
   const menu=overlay?.querySelector('.pmm-wbs-menu');
@@ -909,12 +954,6 @@ async function open(scope = 'character', selected = '', restore = true) {
   overlay.addEventListener('scroll', event=>{
     if(menuId && event.target.classList?.contains('pmm-wbs-body')) {
       menuId='';overlay.querySelectorAll('.pmm-wbs-menu').forEach(node=>node.remove());
-    }
-  },true);
-  overlay.addEventListener('toggle', event=>{
-    if(draft && event.target.matches('[data-draft-book]')) {
-      draft.expanded[event.target.dataset.draftBook]=event.target.open;
-      if(event.target.open) ensureBookEntries(event.target);
     }
   },true);
   overlay.addEventListener('keydown', onKey);
@@ -997,7 +1036,7 @@ function onKey(event) {
   if(event.key==='Escape' && event.target.matches('select'))return;
   if (event.key === 'Escape') { event.stopPropagation(); void close(); }
   if (event.key !== 'Tab') return;
-  const nodes = [...overlay.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),summary')].filter(node => node.getClientRects().length);
+  const nodes = [...overlay.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled)')].filter(node => node.getClientRects().length);
   const first = nodes[0], last = nodes.at(-1);
   if (event.shiftKey && DOC.activeElement === first) { event.preventDefault(); last?.focus(); }
   else if (!event.shiftKey && DOC.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -1009,6 +1048,17 @@ function onClick(event) {
   const target = event.target.closest('button');
   if (!target || target.disabled || busy) return;
   const action = target.dataset.wbs, id = target.dataset.id;
+  if(action==='toggle-draft-book' && draft) {
+    event.preventDefault();
+    const name=target.dataset.book,bookBlock=target.closest('[data-draft-book]');
+    const expanded=!draft.expanded[name];draft.expanded[name]=expanded;
+    target.setAttribute('aria-expanded',String(expanded));
+    if(bookBlock)bookBlock.dataset.open=String(expanded);
+    const entries=bookBlock?.querySelector('.pmm-wbs-book-entries');
+    if(entries)entries.hidden=!expanded;
+    if(expanded)ensureBookEntries(bookBlock);
+    return;
+  }
   if(action==='preview-entry' && draft) {
     const name=target.dataset.previewBook,uid=target.dataset.previewUid;
     draft.previews ||= {}; draft.previews[name] ||= {};
@@ -1035,20 +1085,22 @@ function onClick(event) {
       if (!['character','global'].includes(target.dataset.hubTab)) return;
       say('');
       page = target.dataset.hubTab; book = ''; pickerReturnBook=''; menuId = ''; section = page === 'global' ? 'groups' : 'snapshots'; picker = false; items = [];
-      await refresh();
     } else if (action === 'choose') {
       book = target.dataset.book; pickerReturnBook=''; section = 'snapshots'; picker = false;
-    } else if (action === 'sources') { await refresh(); pickerReturnBook=book; picker = true; }
+    } else if (action === 'sources') { pickerReturnBook=book; picker = true; }
     else if (action === 'back-sources') { book=pickerReturnBook; pickerReturnBook=''; picker = false; }
     else if (action === 'manage-snapshots') { book=id; section='snapshots'; picker=false; pickerReturnBook=''; menuId=''; }
     else if (action === 'back-groups') { section='groups'; book=''; picker=false; pickerReturnBook=''; menuId=''; }
-    else if (action === 'snapshots' || action === 'groups') { section = action; book=''; pickerReturnBook=''; picker = false; await refresh(); }
+    else if (action === 'snapshots' || action === 'groups') { section = action; book=''; pickerReturnBook=''; picker = false; }
     else if (action === 'new') await beginNewSnapshot();
     else if (action === 'edit-snapshot') {
-      engine.setCapturing(true);say('');
+      engine.setCapturing(true);say('正在读取世界书开关…',true);
       try {
+        render();
+        await new Promise(resolve=>scheduleBookEntryRender(resolve));
         const captured=await engine.editBundle(id);
         draft={...captured,expanded:Object.fromEntries(Object.keys(captured.data).map(name=>[name,Object.keys(captured.data).length===1])),queries:{},previews:{}};
+        say('');
       } catch(error) { engine.setCapturing(false);throw error; }
     } else if (action === 'save-draft') {
       const editingDraft = draft;
@@ -1095,7 +1147,7 @@ function onClick(event) {
     else if (action === 'group-menu') menuId=menuId===id?'':id;
     else if (action === 'new-group' || action === 'edit-group') {
       if(action==='edit-group' && !await prepareGroupChange(id,'编辑'))return;
-      await refresh(); groupQuery=''; editGroup = action === 'new-group' ? { name: '', books: [] } : copy(engine.read().groups.find(group => group.id === id));
+      await refresh(true); groupQuery=''; editGroup = action === 'new-group' ? { name: '', books: [] } : copy(engine.read().groups.find(group => group.id === id));
     } else if (action === 'save-group') {
       const pending = editGroup;
       const name = await requestSnapshotName(overlay, pending.name, 100, 'group');
