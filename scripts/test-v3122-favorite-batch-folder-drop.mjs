@@ -8,7 +8,8 @@ for (const marker of [
   'function _pmmMoveFavoriteItemsToCategoryInState',
   'async function _pmmMoveManyFavoritesToCategory',
   'moveManyToCategory:async function',
-  'Array.isArray(e)?await t.moveManyToCategory(e,n):await t.moveToCategory(e,n)',
+  "'function'==typeof t.moveManyToCategory",
+  'else for(const A of e)await t.moveToCategory(A,n)',
   "s('move-to-category',[...E.draggedIds],A.category.id)",
   "s('move-to-category',[...E.draggedIds],n)",
   "s('move-to-category',[...E.draggedIds],void 0)",
@@ -74,5 +75,5 @@ assert.deepEqual(
   '多选拖回收藏根目录没有一次完成',
 );
 
-console.log('v3.1.21 Gecko 回归通过：收藏多选拖入文件夹及拖回根目录均只保存一次，并保留选择顺序。');
+console.log('v3.1.22 Gecko 回归通过：收藏多选拖入文件夹及拖回根目录均只保存一次，并保留选择顺序。');
 
