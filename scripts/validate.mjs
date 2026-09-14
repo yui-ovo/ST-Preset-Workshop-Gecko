@@ -39,7 +39,7 @@ if (workshop.length < 1_000_000 || !workshop.includes('V3.06 Gecko 已加载')) 
   throw new Error(`v3.06 Gecko 业务入口不完整：${workshop.length} 字符`);
 }
 
-if (!entry.includes('workshop-v3.08.js') || !entry.includes('preset-content-editor.js') || !entry.includes('worldbook-stitch-gecko.js') || !entry.includes('worldbook-snapshots.js') || !entry.includes("const EXTENSION_VERSION = '3.1.20'")) {
+if (!entry.includes('workshop-v3.08.js') || !entry.includes('preset-content-editor.js') || !entry.includes('worldbook-stitch-gecko.js') || !entry.includes('worldbook-snapshots.js') || !entry.includes("const EXTENSION_VERSION = '3.1.21'")) {
   throw new Error('扩展启动器没有指向 Gecko 业务入口、预设编辑器、世界书补丁与世界书快照模块');
 }
 
