@@ -1,5 +1,5 @@
-import { requestSnapshotName } from './snapshot-name-dialog.js?v=3.1.23';
-import { createWorldbookSnapshots, copy } from './worldbook-snapshot-core.js?v=3.1.23';
+import { requestSnapshotName } from './snapshot-name-dialog.js?v=3.1.24';
+import { createWorldbookSnapshots, copy } from './worldbook-snapshot-core.js?v=3.1.24';
 
 const SELF = window, TOP = window.parent || window, DOC = TOP.document;
 const KEY = '__PMM_WORLDBOOK_SNAPSHOTS__';

@@ -14469,14 +14469,17 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
     return readStore().snapshots.find(snapshot => snapshot.id === id) || null;
   }
 
-  function mergeSnapshotStates(prompts, states) {
+  function mergeSnapshotStates(prompts, states, { closeUnrecorded = false } = {}) {
     const statesById = new Map(states.filter(state => text(state.id)).map(state => [text(state.id), state]));
+    const promptIds = new Set(prompts.map(prompt => text(prompt.id)).filter(Boolean));
     const stateNameCounts = new Map();
     const promptNameCounts = new Map();
     for (const state of states) stateNameCounts.set(text(state.name), (stateNameCounts.get(text(state.name)) || 0) + 1);
     for (const prompt of prompts) promptNameCounts.set(text(prompt.name || prompt.id), (promptNameCounts.get(text(prompt.name || prompt.id)) || 0) + 1);
     const uniqueStatesByName = new Map(states
       .filter(state => stateNameCounts.get(text(state.name)) === 1)
+      // 已按 ID 对应的记录不能再套用到另一条同名条目。
+      .filter(state => !promptIds.has(text(state.id)))
       .map(state => [text(state.name), state]));
 
     let applied = 0;
@@ -14486,11 +14489,13 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
       const name = text(prompt.name || prompt.id);
       const state = statesById.get(id)
         || (promptNameCounts.get(name) === 1 ? uniqueStatesByName.get(name) : null);
-      if (!state) return prompt;
-      applied += 1;
-      if (prompt.enabled === state.enabled) return prompt;
+      // 只有应用快照才关闭未记录条目；取消编辑还原仍保留它们。
+      if (!state && !closeUnrecorded) return prompt;
+      if (state) applied += 1;
+      const enabled = state ? state.enabled : false;
+      if (prompt.enabled === enabled) return prompt;
       changed += 1;
-      return { ...prompt, enabled: state.enabled };
+      return { ...prompt, enabled };
     });
     return { nextPrompts, applied, changed };
   }
@@ -14569,10 +14574,10 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
       return false;
     }
 
-    const { nextPrompts, applied, changed } = mergeSnapshotStates(prompts, snapshot.states);
+    const { nextPrompts, applied, changed } = mergeSnapshotStates(prompts, snapshot.states, { closeUnrecorded: true });
     const hasSavedGroups = Array.isArray(snapshot.groupStates) && snapshot.groupStates.length > 0;
 
-    if (!applied && !hasSavedGroups) {
+    if (!applied && (!hasSavedGroups || !matchGroupStates(makeGroupStates(presetName), snapshot.groupStates).length)) {
       notify('warning', '没有能与当前预设对应的快照条目');
       return false;
     }
@@ -15323,7 +15328,7 @@ console.info('[预设工坊] V3.06 Gecko 已加载：精简重复通知，支持
       ${defaultMarkup}
       ${composerMarkup}
       <div class="pmm-switch-snapshot-list">${rows}</div>
-      <footer class="pmm-switch-snapshot-footer"><span>快照保存条目开关与柏宝箱分组开关。</span><span>角色锁绑定当前角色，聊天锁绑定当前聊天；可通过「…」批量绑定多个角色；进入已绑定的角色或聊天时，会自动应用该快照。</span></footer>
+      <footer class="pmm-switch-snapshot-footer"><span>快照保存条目开关与柏宝箱分组开关。应用时，未记录在快照中的条目会关闭。</span><span>角色锁绑定当前角色，聊天锁绑定当前聊天；可通过「…」批量绑定多个角色；进入已绑定的角色或聊天时，会自动应用该快照。</span></footer>
       ${characterPickerMarkup}
     </section>`;
     if (openMenuId) positionOpenSnapshotMenu(existing);
