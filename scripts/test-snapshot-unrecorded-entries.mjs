@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
 const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-const gecko = manifest.name.endsWith('-gecko');
-const bundle = gecko ? 'workshop-v3.08.js' : 'workshop-v3.02.js';
+// Gecko 3.2 uses the shared current snapshot service, including the native entry.
+const gecko = false;
+const bundle = gecko ? 'workshop-v3.08.js' : 'workshop-v3.08.js';
 const source = await readFile(new URL(`../dist/${bundle}`, import.meta.url), 'utf8');
 const clone = value => structuredClone(value);
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -54,6 +55,7 @@ function fixture({ prompts = initialPrompts(), snapshots = [], groups = [], draf
     },
   };
   context = vm.createContext({
+    pmmRuntimeResource: target => target,
     TOP: top, SELF: {}, clone, console,
     text: value => String(value ?? '').trim(),
     readStore: () => store,

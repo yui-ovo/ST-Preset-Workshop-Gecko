@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
 const isGecko = String(manifest.display_name || '').includes('Gecko');
-const workshopPath = isGecko ? '../dist/workshop-v3.08.js' : '../dist/workshop-v2.96.js';
+const workshopPath = '../dist/workshop-v3.08.js';
 const workshop = await readFile(new URL(workshopPath, import.meta.url), 'utf8');
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
 const editor = await readFile(new URL('../dist/preset-content-editor.js', import.meta.url), 'utf8');
@@ -79,12 +79,14 @@ assert.equal(manifest.hooks?.update, 'onUpdate', 'manifest 必须注册酒馆官
 for (const marker of [
   'export function onUpdate()',
   'scheduleNativeSingleUpdateReload()',
+  'deferNativeSingleUpdateReload()',
   'bulkExtensionUpdateInProgress = true',
-  'NATIVE_UPDATE_RELOAD_DELAY = 1_000',
+  'UPDATE_MANAGER_SETTLE_DELAY = 1_500',
+  "target.closest('.popup-button-ok')",
+  "dialog?.querySelector('.extensions_info')",
   'RAPID_VERSION_CHECK_INTERVAL = 750',
   "document.addEventListener('click', handleNativeExtensionManagerClick, true)",
   "new URL('./preset-content-editor.js', import.meta.url)",
-  "url.searchParams.set('v', EXTENSION_VERSION)",
 ]) {
   assert.ok(entry.includes(marker), `更新刷新或预设编辑器入口缺少实现：${marker}`);
 }

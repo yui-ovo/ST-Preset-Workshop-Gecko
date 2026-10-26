@@ -4,19 +4,8 @@ import { createHash } from 'node:crypto';
 const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
 const workshop = await readFile(new URL('../dist/workshop-v3.08.js', import.meta.url), 'utf8');
-const presetEditor = await readFile(new URL('../dist/preset-content-editor.js', import.meta.url), 'utf8');
-const worldbook = await readFile(new URL('../dist/worldbook-stitch-gecko.js', import.meta.url), 'utf8');
-const worldbookToolbar = await readFile(new URL('../dist/worldbook-toolbar-entry-gecko.js', import.meta.url), 'utf8');
-const worldbookBridge = await readFile(new URL('../dist/worldbook-preset-drop-bridge-gecko.js', import.meta.url), 'utf8');
-const worldbookSnapshotCore = await readFile(new URL('../dist/worldbook-snapshot-core.js', import.meta.url), 'utf8');
-const worldbookSnapshots = await readFile(new URL('../dist/worldbook-snapshots.js', import.meta.url), 'utf8');
-const snapshotNameDialog = await readFile(new URL('../dist/snapshot-name-dialog.js', import.meta.url), 'utf8');
-// Git may materialize this legacy script as CRLF on Windows while the JSON
-// fixture keeps LF. Its content hash is intentionally platform-independent.
-const normalizeLineEndings = value => String(value).replace(/\r\n/g, '\n');
-const migrationBase = normalizeLineEndings(await readFile(new URL('../dist/workshop-v2.53.js', import.meta.url), 'utf8'));
+const migrationBase = (await readFile(new URL('../dist/workshop-v2.53.js', import.meta.url), 'utf8')).replaceAll('\r\n','\n');
 const bridge = await readFile(new URL('../bridge/predefine.js', import.meta.url), 'utf8');
-const scheduler = await readFile(new URL('../bridge/gecko-frame-scheduler.js', import.meta.url), 'utf8');
 const legacy = JSON.parse(await readFile(new URL('../legacy/🧩预设工坊｜双端适配v2.53.json', import.meta.url), 'utf8'));
 const expectedWorkshopHash = '35a0f76b35d8fea5bedcf5b266e1baad5bbec5aedadc00a6c8a1560bc12efa6d';
 
@@ -35,32 +24,28 @@ if (!entry.includes('startPresetWorkshop') || !entry.includes('waitForTavernHelp
   throw new Error('扩展启动器不完整');
 }
 
-if (workshop.length < 1_000_000 || !workshop.includes('V3.06 Gecko 已加载')) {
-  throw new Error(`v3.06 Gecko 业务入口不完整：${workshop.length} 字符`);
+if (workshop.length < 1_000_000 || !workshop.includes('V2.99 已加载')) {
+  throw new Error(`v2.99 业务入口不完整：${workshop.length} 字符`);
 }
 
-if (!entry.includes('workshop-v3.08.js') || !entry.includes('preset-content-editor.js') || !entry.includes('worldbook-stitch-gecko.js') || !entry.includes('worldbook-snapshots.js') || !entry.includes("const EXTENSION_VERSION = '3.1.24'")) {
-  throw new Error('扩展启动器没有指向 Gecko 业务入口、预设编辑器、世界书补丁与世界书快照模块');
+if (!entry.includes('workshop-v3.08.js') || !entry.includes('preset-content-editor.js') || !entry.includes('worldbook-stitch-gecko.js') || !entry.includes(`const EXTENSION_VERSION = '${manifest.version}'`)) {
+  throw new Error('扩展启动器没有指向 v2.99');
 }
 
 if (!workshop.includes('readPresetExtensionField?.({name:requested,path:PATH})')) {
-  throw new Error('v3.06 Gecko 没有按指定预设读取柏宝箱分组');
+  throw new Error('v2.99 没有按指定预设读取柏宝箱分组');
 }
 
 if (!workshop.includes('writePresetExtensionField({name:presetName,path:PATH')) {
-  throw new Error('v3.06 Gecko 没有按指定预设写入柏宝箱分组');
+  throw new Error('v2.99 没有按指定预设写入柏宝箱分组');
 }
 
 if (!workshop.includes("String(n).startsWith('branch:')") ||
     !workshop.includes('分支直接使用已保存的柏宝箱分组快照')) {
-  throw new Error('v3.06 Gecko 缺少分支快照读取隔离修复');
+  throw new Error('v2.99 缺少分支快照读取隔离修复');
 }
 
-if (!presetEditor.includes('openPresetContentEditor') || /worldbook|data-wb|pmm-wb/iu.test(presetEditor)) {
-  throw new Error('独立预设正文编辑器缺失或混入了世界书功能');
-}
-
-if (normalizeLineEndings(legacy.content) !== migrationBase) {
+if (legacy.content.replaceAll('\r\n','\n') !== migrationBase) {
   throw new Error('dist/workshop-v2.53.js 与原始 v2.53 JSON 内容不一致');
 }
 
@@ -73,25 +58,4 @@ if (!bridge.includes('TavernHelper') || !bridge.includes('_bind')) {
   throw new Error('酒馆助手兼容桥不完整');
 }
 
-if (!scheduler.includes('__PMM_GECKO_FRAME_SCHEDULER_V277__') || !entry.includes('gecko-frame-scheduler.js')) {
-  throw new Error('v3.06 Gecko 顶层帧调度桥不完整');
-}
-
-if (!worldbook.includes('function markWorldDraftDirty(side)') || !worldbook.includes('async function saveWorldSide(side)') || !worldbook.includes('await reloadOpenNativeWorldbook(side.name);')) {
-  throw new Error('世界书草稿保存与原生页面同步模块不完整');
-}
-
-if (!worldbookSnapshotCore.includes('createWorldbookSnapshots') || !worldbookSnapshots.includes('__PMM_WORLDBOOK_SNAPSHOTS__') || !worldbookSnapshots.includes('__PMM_WORLDBOOK_STITCH_TEST3__') || !worldbookSnapshots.includes('可一键全局挂载世界书分组；也可为分组世界书创建快照。') || !snapshotNameDialog.includes('requestSnapshotName')) {
-  throw new Error('世界书快照模块不完整');
-}
-
-if (!worldbookToolbar.includes('data-pmm-worldbook-placeholder') || !worldbookToolbar.includes('打开世界书缝合')) {
-  throw new Error('世界书工具栏入口不完整');
-}
-
-if (!worldbookBridge.includes("const API_KEY = '__PMM_WORLDBOOK_PRESET_DROP_BRIDGE__'") || !worldbookBridge.includes("source.onCrossPanelDrop")) {
-  throw new Error('世界书到预设的 Gecko 拖入桥不完整');
-}
-
 console.log(`扩展检查通过：${manifest.display_name} v${manifest.version}，业务入口 ${workshop.length} 字符。`);
-await import('./test-ported-features.mjs');

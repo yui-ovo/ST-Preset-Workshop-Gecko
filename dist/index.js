@@ -1,5 +1,6 @@
+import { readWorkshopMode, installWorkshopModeSettings } from './workshop-mode.js?v=3.2.0';
 const EXTENSION_NAME = '🧩预设工坊（Gecko兼容测试版）';
-const EXTENSION_VERSION = '3.1.24';
+const EXTENSION_VERSION = '3.2.0';
 const RUNTIME_ID = 'TH-script--🧩预设工坊（Gecko 兼容扩展）--45dd76e4-8cce-41df-921f-9ebc856a9f25';
 const LEGACY_IFRAME_PREFIX = 'TH-script--🧩预设工坊';
 const EXTENSION_FOLDER_NAME = 'ST-Preset-Workshop-Gecko';
@@ -8,7 +9,8 @@ const LEGACY_GRACE_PERIOD = 3_000;
 const VERSION_CHECK_INTERVAL = 30_000;
 const RAPID_VERSION_CHECK_INTERVAL = 750;
 const RAPID_VERSION_CHECK_TIMEOUT = 65_000;
-const NATIVE_UPDATE_RELOAD_DELAY = 1_000;
+const UPDATE_MANAGER_SETTLE_DELAY = 1_500;
+const UPDATE_MANAGER_CLOSE_POLL_INTERVAL = 50;
 const TOP_NOTIFICATION_STORAGE_KEY = 'pmm_top_notifications_enabled_v1';
 
 let versionCheckTimer = null;
@@ -16,8 +18,11 @@ let versionCheckBusy = false;
 let rapidVersionCheckTimer = null;
 let rapidVersionCheckStopTimer = null;
 let nativeUpdateReloadTimer = null;
+let nativeUpdateReloadPending = false;
 let singleExtensionUpdatePending = false;
 let bulkExtensionUpdateInProgress = false;
+let startupPromise = null;
+let runtimeGeneration = 0;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -61,12 +66,12 @@ async function checkForInstalledUpdate() {
     if (document.visibilityState === 'hidden') return;
     if (await readInstalledVersion() !== nextVersion) return;
 
-    const followsNativeSingleUpdate = singleExtensionUpdatePending;
-    stopVersionWatcher();
+    const followsNativeSingleUpdate = nativeUpdateReloadPending || singleExtensionUpdatePending;
     if (followsNativeSingleUpdate) {
-      /* 单独更新时酒馆会自己弹成功提示，留一秒给原生提示显示，不再重复弹第二条。 */
-      await sleep(NATIVE_UPDATE_RELOAD_DELAY);
+      deferNativeSingleUpdateReload();
+      return;
     } else {
+      stopVersionWatcher();
       notify('info', `扩展已更新至 v${nextVersion}，正在自动刷新酒馆`);
       await sleep(450);
     }
@@ -124,20 +129,68 @@ function startRapidVersionCheck() {
   );
 }
 
+function clearPendingExtensionUpdateReload() {
+  if (nativeUpdateReloadTimer !== null) {
+    globalThis.clearTimeout(nativeUpdateReloadTimer);
+    nativeUpdateReloadTimer = null;
+  }
+  nativeUpdateReloadPending = false;
+  document.removeEventListener('click', handlePendingExtensionManagerClose, true);
+}
+
 function markExtensionUpdateReload() {
+  clearPendingExtensionUpdateReload();
   globalThis.__PMM_PERFORMANCE_GUARD_V275__?.markReloadReason?.('extension-update');
   globalThis.location.reload();
 }
 
+function activeExtensionManagerDialog() {
+  return [...document.querySelectorAll('dialog')].find(dialog => (
+    dialog.open && Boolean(dialog.querySelector('.extensions_info'))
+  )) || null;
+}
+
+function waitForExtensionManagerClose(dialog) {
+  if (nativeUpdateReloadTimer !== null) globalThis.clearTimeout(nativeUpdateReloadTimer);
+  const deadline = Date.now() + 3_000;
+  const check = () => {
+    nativeUpdateReloadTimer = null;
+    if (dialog?.isConnected && dialog.open && Date.now() < deadline) {
+      nativeUpdateReloadTimer = globalThis.setTimeout(check, UPDATE_MANAGER_CLOSE_POLL_INTERVAL);
+      return;
+    }
+    markExtensionUpdateReload();
+  };
+  nativeUpdateReloadTimer = globalThis.setTimeout(check, 0);
+}
+
+function handlePendingExtensionManagerClose(event) {
+  if (!nativeUpdateReloadPending) return;
+  const target = event?.target;
+  if (!target || typeof target.closest !== 'function') return;
+  const closeButton = target.closest('.popup-button-ok');
+  const dialog = closeButton?.closest('dialog');
+  if (!dialog?.querySelector('.extensions_info')) return;
+  waitForExtensionManagerClose(dialog);
+}
+
+function deferNativeSingleUpdateReload() {
+  if (nativeUpdateReloadPending) return;
+  stopVersionWatcher();
+  nativeUpdateReloadPending = true;
+  document.addEventListener('click', handlePendingExtensionManagerClose, true);
+  /* 更新器会先关闭旧窗口并重建扩展列表；给新窗口留出挂载时间。 */
+  nativeUpdateReloadTimer = globalThis.setTimeout(() => {
+    nativeUpdateReloadTimer = null;
+    if (nativeUpdateReloadPending && !activeExtensionManagerDialog()) markExtensionUpdateReload();
+  }, UPDATE_MANAGER_SETTLE_DELAY);
+}
+
 function scheduleNativeSingleUpdateReload() {
-  if (bulkExtensionUpdateInProgress || nativeUpdateReloadTimer !== null) return false;
+  if (bulkExtensionUpdateInProgress || nativeUpdateReloadPending) return false;
   if (!singleExtensionUpdatePending && !isOwnSingleUpdateSpinning()) return false;
 
-  stopVersionWatcher();
-  nativeUpdateReloadTimer = globalThis.setTimeout(
-    markExtensionUpdateReload,
-    NATIVE_UPDATE_RELOAD_DELAY,
-  );
+  deferNativeSingleUpdateReload();
   return true;
 }
 
@@ -220,34 +273,46 @@ async function waitForTavernHelper() {
 }
 
 function buildRuntimeDocument() {
-  const appendRuntimeVersion = url => {
-    url.searchParams.set('v', EXTENSION_VERSION);
+  const snapshotOnly = readWorkshopMode() === 'snapshots';
+  const appendRuntimeVersion = source => {
+    const url = new URL(source);
+    url.searchParams.set('pmm-version', EXTENSION_VERSION);
     return url.href;
   };
   const schedulerUrl = appendRuntimeVersion(new URL('../bridge/gecko-frame-scheduler.js', import.meta.url));
-  const parentJqueryUrl = appendRuntimeVersion(new URL('../bridge/parent-jquery.js', import.meta.url));
-  const predefineUrl = appendRuntimeVersion(new URL('../bridge/predefine.js', import.meta.url));
-  const workshopUrl = appendRuntimeVersion(new URL('./workshop-v3.08.js', import.meta.url));
-  const presetContentEditorUrl = appendRuntimeVersion(new URL('./preset-content-editor.js', import.meta.url));
-  const worldbookStitchUrl = appendRuntimeVersion(new URL('./worldbook-stitch-gecko.js', import.meta.url));
-  const worldbookSnapshotsUrl = appendRuntimeVersion(new URL('./worldbook-snapshots.js', import.meta.url));
   const worldbookBridgeUrl = appendRuntimeVersion(new URL('./worldbook-preset-drop-bridge-gecko.js', import.meta.url));
-  const worldbookToolbarUrl = appendRuntimeVersion(new URL('./worldbook-toolbar-entry-gecko.js', import.meta.url));
+  const parentJqueryUrl = appendRuntimeVersion(new URL('../bridge/parent-jquery.js', import.meta.url).href);
+  const predefineUrl = appendRuntimeVersion(new URL('../bridge/predefine.js', import.meta.url).href);
+  const workshopUrl = appendRuntimeVersion(new URL('./workshop-v3.08.js', import.meta.url).href);
+  const snapshotOnlyUrl = appendRuntimeVersion(new URL('./snapshot-only.js', import.meta.url).href);
+  const presetContentEditorUrl = appendRuntimeVersion(new URL('./preset-content-editor.js', import.meta.url).href);
+  const worldbookStitchUrl = appendRuntimeVersion(new URL('./worldbook-stitch-gecko.js', import.meta.url).href);
+  const sharedFavoritesUrl = appendRuntimeVersion(new URL('./shared-favorites.js', import.meta.url).href);
+  const worldbookSnapshotsUrl = appendRuntimeVersion(new URL('./worldbook-snapshots.js', import.meta.url).href);
   const worldbookLoaderKey = '__PMM_LOAD_WORLDBOOK_STITCH__';
+  const regexManagerUrl = appendRuntimeVersion(new URL('./regex-manager.js', import.meta.url).href);
+  const resourcesUrl = appendRuntimeVersion(new URL('./runtime-resources.js', import.meta.url).href);
 
   return `<!DOCTYPE html>
 <html>
 <head>
 <base href="${location.origin}/">
 <script src="${schedulerUrl}"></script>
-<script src="https://testingcf.jsdelivr.net/npm/vue/dist/vue.runtime.global.prod.min.js"></script>
-<script src="https://testingcf.jsdelivr.net/npm/vue-router/dist/vue-router.global.prod.min.js"></script>
+${snapshotOnly ? '' : '<script src="https://testingcf.jsdelivr.net/npm/vue/dist/vue.runtime.global.prod.min.js"></script><script src="https://testingcf.jsdelivr.net/npm/vue-router/dist/vue-router.global.prod.min.js"></script>'}
 <script src="${parentJqueryUrl}"></script>
 <script src="${predefineUrl}"></script>
-<script src="https://testingcf.jsdelivr.net/gh/N0VI028/JS-Slash-Runner/src/iframe/node_modules/log.js"></script>
+${snapshotOnly ? '' : '<script src="https://testingcf.jsdelivr.net/gh/N0VI028/JS-Slash-Runner/src/iframe/node_modules/log.js"></script>'}
 </head>
 <body>
-<script>
+<script type="module">
+import {createRuntimeScope} from ${JSON.stringify(resourcesUrl)};
+window.__PMM_RUNTIME_SCOPE__ = createRuntimeScope(window);
+</script>
+${snapshotOnly ? '' : `<script>
+(() => {
+  let loading;
+  window.__PMM_LOAD_REGEX_MANAGER__ = () => loading ||= import(${JSON.stringify(regexManagerUrl)}).catch(error => { loading = null; throw error; });
+})();
 (() => {
   const source = ${JSON.stringify(worldbookStitchUrl)};
   const loaderKey = ${JSON.stringify(worldbookLoaderKey)};
@@ -280,17 +345,27 @@ function buildRuntimeDocument() {
     return loading;
   };
 })();
-</script>
-<script src="${worldbookBridgeUrl}"></script>
+</script>`}
+${snapshotOnly ? `<script type="module" src="${snapshotOnlyUrl}"></script>` : `<script type="module" src="${presetContentEditorUrl}"></script>
 <script type="module" src="${worldbookSnapshotsUrl}"></script>
-<script type="module" src="${workshopUrl}"></script>
-<script type="module" src="${presetContentEditorUrl}"></script>
-<script src="${worldbookToolbarUrl}"></script>
+<script type="module" src="${worldbookBridgeUrl}"></script>
+<script type="module" src="${sharedFavoritesUrl}"></script>
+<script type="module" src="${workshopUrl}"></script>`}
 </body>
 </html>`;
 }
 
 export async function startPresetWorkshop() {
+  if (startupPromise) return startupPromise;
+  const generation = runtimeGeneration;
+  const pending = startRuntime(generation);
+  startupPromise = pending;
+  try { return await pending; }
+  finally { if (startupPromise === pending) startupPromise = null; }
+}
+
+async function startRuntime(generation) {
+  installWorkshopModeSettings();
   startVersionWatcher();
   const currentRuntime = document.getElementById(RUNTIME_ID);
   if (currentRuntime) {
@@ -311,7 +386,9 @@ export async function startPresetWorkshop() {
     return null;
   }
 
+  if (generation !== runtimeGeneration) return null;
   const delayedLegacyRuntime = await waitForLegacyRuntime();
+  if (generation !== runtimeGeneration) return null;
   if (delayedLegacyRuntime) {
     console.warn(`[${EXTENSION_NAME}] 检测到稍后启动的旧版酒馆助手脚本，扩展运行实例未重复启动。`);
     notify('warning', '检测到旧版脚本，请先停用旧版后再使用扩展版');
@@ -345,25 +422,44 @@ export async function startPresetWorkshop() {
   document.body.appendChild(iframe);
 
   iframe.addEventListener('load', () => {
-    console.info(`[${EXTENSION_NAME}] GitHub 扩展运行环境已启动（v3.06 Gecko）`);
+    console.info(`[${EXTENSION_NAME}] GitHub 扩展运行环境已启动（v${EXTENSION_VERSION}）`);
   }, { once: true });
 
   return iframe;
 }
 
 export function stopPresetWorkshop() {
+  runtimeGeneration++;
+  startupPromise = null;
   stopVersionWatcher();
-  if (nativeUpdateReloadTimer !== null) {
-    globalThis.clearTimeout(nativeUpdateReloadTimer);
-    nativeUpdateReloadTimer = null;
-  }
+  clearPendingExtensionUpdateReload();
   try { globalThis.__PMM_PRESET_CONTENT_EDITOR_V1__?.cleanup?.(); } catch (_) {}
-  document.getElementById(RUNTIME_ID)?.remove();
+  try { globalThis.__PMM_PRESET_SNAPSHOT_LINKS__?.cleanup?.(); } catch (_) {}
+  try { globalThis.__PMM_PRESET_SNAPSHOT_STORAGE__?.cleanup?.(); } catch (_) {}
+  const runtime = document.getElementById(RUNTIME_ID);
+  runtime?.contentWindow?.__PMM_RUNTIME_SCOPE__?.dispose();
+  runtime?.remove();
+}
+
+let restarting = null;
+export function restartPresetWorkshop() {
+  if (restarting) return restarting;
+  restarting = (async () => {
+    stopPresetWorkshop();
+    const runtime = await startPresetWorkshop();
+    if (!runtime) throw Error('工坊启动失败，请检查酒馆助手是否启用');
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(Error('工坊启动超时，请稍后重试')), 30000);
+      runtime.addEventListener('load', () => {clearTimeout(timer);resolve();}, {once:true});
+    });
+  })().finally(() => { restarting = null; });
+  return restarting;
 }
 
 globalThis.__ST_PRESET_WORKSHOP__ = {
   start: startPresetWorkshop,
   stop: stopPresetWorkshop,
+  restart: restartPresetWorkshop,
   version: EXTENSION_VERSION,
 };
 
