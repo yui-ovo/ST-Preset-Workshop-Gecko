@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../dist/workshop-v2.76.js', import.meta.url), 'utf8');
+const source = (await readFile(new URL('../dist/workshop-v3.08.js', import.meta.url), 'utf8')).replace(/pmmRuntimeResource\((\w+)\)/g, '$1');
 const entry = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
 const marker = '/* ===== PMM_MOBILE_PERFORMANCE_GUARD_V275';
 const nextMarker = '/* ===== PMM_VARIABLE_MACRO_ASSISTANT_V263';
@@ -17,7 +17,7 @@ assert.ok(source.includes(':not(.prompt-item--expanded):not(.prompt-item--editin
 assert.ok(source.includes("guard.noteDeferredScan?.('variable-editor')"), 'S/G 编辑器扫描没有避开滚动和拖拽峰值');
 assert.ok(source.includes("guard.noteDeferredScan?.('variable-basket')"), '变量清单核对没有避开滚动和拖拽峰值');
 assert.ok(source.includes("guard.noteDeferredScan?.('mobile-dom')"), '移动端入口与工具扫描没有避开滚动和拖拽峰值');
-assert.ok(source.includes('const mo = new MutationObserver(requestScan)'), '移动端 DOM 变化仍会同步触发完整扫描');
+assert.ok(source.includes('const mo = new MutationObserver(records =>') && source.includes(".pmm-content-diff-overlay')) requestScan();"), '移动端 DOM 变化必须先过滤相关节点，再安排扫描');
 assert.ok(source.includes('if (performanceGuard()?.isBusy?.())'), '延迟后的变量核对没有再次确认忙碌状态');
 assert.ok(source.includes('V2.75 已加载'), '缺少 v2.75 业务加载标记');
 
@@ -79,6 +79,7 @@ fakeWindow.top = fakeWindow;
 fakeDocument.defaultView = fakeWindow;
 
 const context = {
+  pmmRuntimeResource: target => target,
   window: fakeWindow,
   document: fakeDocument,
   console: { info() {}, warn() {}, error() {} },

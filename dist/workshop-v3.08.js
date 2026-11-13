@@ -1,4 +1,29 @@
 function pmmRuntimeResource(target) { return globalThis.__PMM_RUNTIME_SCOPE__?.own(target) || target; }
+
+/* ===== PMM_MUTATION_FILTER: keep host chat/other extensions out of UI scans. ===== */
+function pmmMutationsAffect(records, selector, includePageAttributes = false) {
+  for (const record of records) {
+    // nodeType rather than instanceof: observers also watch the parent document.
+    const target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement;
+    if (target?.closest?.(selector)) return true;
+    // Host theme classes/styles may be inherited by a panel outside its subtree.
+    if (includePageAttributes && record.type === 'attributes' && target &&
+        (target === target.ownerDocument?.documentElement || target === target.ownerDocument?.body) &&
+        target.ownerDocument.querySelector?.(selector)) return true;
+    if (record.type !== 'childList') continue;
+    // Workshop panels and native preset controls mount outside the chat log.
+    // Streaming Markdown can replace a large message subtree on every update.
+    if (target?.closest?.('#chat')) continue;
+    // Discover newly mounted roots and wrappers, and also handle their removal.
+    for (const nodes of [record.addedNodes, record.removedNodes]) {
+      for (const node of nodes || []) {
+        if (node.nodeType === 1 && (node.matches?.(selector) || node.querySelector?.(selector))) return true;
+      }
+    }
+  }
+  return false;
+}
+/* ===== PMM_MUTATION_FILTER END ===== */
 let pmmEditingContext = null;
 const pmmCompareInsertedIds = new Map();
 function pmmQueueCompareGroups(name) {
@@ -520,7 +545,7 @@ function _pmmThemeContrast(e,n){const t=_pmmThemeLuminance(e),A=_pmmThemeLuminan
 function _pmmThemeCardFromPanel(e,n=.92){const t=_pmmParseThemeColor(e);if(!t)return xn(e,n);const A=_pmmThemeLuminance(t),a=A>.48?.975:1.11,o=A>.48?.98:1.09,r=A>.48?.985:1.07;return`rgba(${Math.max(0,Math.min(255,Math.round(t.r*a)))}, ${Math.max(0,Math.min(255,Math.round(t.g*o)))}, ${Math.max(0,Math.min(255,Math.round(t.b*r)))}, ${n})`}
 function _pmmReadableThemeText(e,n,t=4.5){const A=_pmmParseThemeColor(e),a=_pmmParseThemeColor(n);if(!A)return n;if(a&&_pmmThemeContrast(A,a)>=t)return n;const o='#1f2937',r='#f8fafc';return _pmmThemeContrast(A,_pmmParseThemeColor(o))>=_pmmThemeContrast(A,_pmmParseThemeColor(r))?o:r}
 function _pmmReadableThemeTextForSurfaces(e,n,t=4.5){const A=(Array.isArray(e)?e:[e]).map(_pmmParseThemeColor).filter(Boolean),a=_pmmParseThemeColor(n);if(!A.length)return n;const o=e=>Math.min(...A.map(n=>_pmmThemeContrast(n,e)));if(a&&o(a)>=t)return n;const r='#1f2937',i='#f8fafc';return o(_pmmParseThemeColor(r))>=o(_pmmParseThemeColor(i))?r:i}
-const fn={toolbarBg:'rgba(243, 244, 246, 0.95)',panelBg:'rgba(255, 255, 255, 1)',cardBg:'rgba(249, 250, 251, 0.9)',textPrimary:'#111827',textSecondary:'#4b5563',border:'#d1d5db',accent:'#2563eb',hoverBg:'rgba(0, 0, 0, 0.05)',selectedBg:'rgba(37, 99, 235, 0.1)',fontFamily:'inherit',fontWeight:'normal',textShadow:'none',fontSize:'1rem',lineHeight:'1.5',quoteColor:'#4b5563',glassBg:'rgba(243, 244, 246, 0.88)',glassHoverBg:'rgba(229, 231, 235, 0.92)',floatingGlassBg:'rgba(243, 244, 246, 0.75)',floatingGlassHoverBg:'rgba(229, 231, 235, 0.82)',controlBg:'rgba(243, 244, 246, 0.9)',controlHoverBg:'rgba(229, 231, 235, 0.92)',buttonBg:'rgba(209, 213, 219, 0.9)',barBg:'rgba(243, 244, 246, 0.95)',cardBgTranslucent:'rgba(249, 250, 251, 0.85)'},hn={toolbarBg:'rgba(17, 24, 39, 0.95)',panelBg:'rgba(10, 15, 25, 1)',cardBg:'rgba(31, 41, 55, 0.9)',textPrimary:'#f3f4f6',textSecondary:'#9ca3af',border:'#374151',accent:'#3b82f6',hoverBg:'rgba(255, 255, 255, 0.05)',selectedBg:'rgba(59, 130, 246, 0.2)',fontFamily:'inherit',fontWeight:'normal',textShadow:'none',fontSize:'1rem',lineHeight:'1.5',quoteColor:'#9ca3af',glassBg:'rgba(17, 24, 39, 0.88)',glassHoverBg:'rgba(10, 15, 25, 0.92)',floatingGlassBg:'rgba(17, 24, 39, 0.75)',floatingGlassHoverBg:'rgba(10, 15, 25, 0.82)',controlBg:'rgba(31, 41, 55, 0.9)',controlHoverBg:'rgba(25, 35, 45, 0.92)',buttonBg:'rgba(55, 65, 81, 0.9)',barBg:'rgba(17, 24, 39, 0.95)',cardBgTranslucent:'rgba(31, 41, 55, 0.85)'},vn=n('preset_manager_theme',()=>{const e=(0,i.ref)('light'),n=(0,i.ref)(t(fn));let A=null;const a=(0,i.computed)(()=>({'--pm-toolbar-bg':n.value.toolbarBg,'--pm-panel-bg':n.value.panelBg,'--pm-solid-panel-bg':pmmSolidThemeColor(n.value.panelBg),'--pm-solid-glass-bg':pmmSolidThemeColor(n.value.glassBg),'--pm-card-bg':n.value.cardBg,'--pm-text-primary':n.value.textPrimary,'--pm-text-secondary':n.value.textSecondary,'--pm-border':n.value.border,'--pm-title-card-border':_pmmTitleCardBorder(n.value.panelBg),'--pm-accent':n.value.accent,'--pm-hover-bg':n.value.hoverBg,'--pm-selected-bg':n.value.selectedBg,'--pm-font-family':n.value.fontFamily,'--pm-font-weight':n.value.fontWeight,'--pm-text-shadow':n.value.textShadow,'--pm-font-size':n.value.fontSize,'--pm-line-height':n.value.lineHeight,'--pm-quote-color':n.value.quoteColor,'--pm-glass-bg':n.value.glassBg,'--pm-glass-hover-bg':n.value.glassHoverBg,'--pm-floating-glass-bg':n.value.floatingGlassBg,'--pm-floating-glass-hover-bg':n.value.floatingGlassHoverBg,'--pm-control-bg':n.value.controlBg,'--pm-control-hover-bg':n.value.controlHoverBg,'--pm-button-bg':n.value.buttonBg,'--pm-bar-bg':n.value.barBg,'--pm-card-bg-translucent':n.value.cardBgTranslucent}));
+const fn={toolbarBg:'rgba(243, 244, 246, 0.95)',panelBg:'rgba(255, 255, 255, 1)',cardBg:'rgba(249, 250, 251, 0.9)',textPrimary:'#111827',textSecondary:'#4b5563',border:'#d1d5db',accent:'#2563eb',hoverBg:'rgba(0, 0, 0, 0.05)',selectedBg:'rgba(37, 99, 235, 0.1)',fontFamily:'inherit',fontWeight:'normal',textShadow:'none',fontSize:'1rem',lineHeight:'1.5',quoteColor:'#4b5563',glassBg:'rgba(243, 244, 246, 0.88)',glassHoverBg:'rgba(229, 231, 235, 0.92)',floatingGlassBg:'rgba(243, 244, 246, 0.75)',floatingGlassHoverBg:'rgba(229, 231, 235, 0.82)',controlBg:'rgba(243, 244, 246, 0.9)',controlHoverBg:'rgba(229, 231, 235, 0.92)',buttonBg:'rgba(209, 213, 219, 0.9)',barBg:'rgba(243, 244, 246, 0.95)',cardBgTranslucent:'rgba(249, 250, 251, 0.85)'},hn={toolbarBg:'rgba(14, 14, 14, 0.95)',panelBg:'#000000',cardBg:'rgba(28, 28, 28, 0.9)',textPrimary:'#f4f4f4',textSecondary:'#b5b5b5',border:'#444444',accent:'#3b82f6',hoverBg:'rgba(255, 255, 255, 0.05)',selectedBg:'rgba(255, 255, 255, 0.14)',fontFamily:'inherit',fontWeight:'normal',textShadow:'none',fontSize:'1rem',lineHeight:'1.5',quoteColor:'#b5b5b5',glassBg:'rgba(0, 0, 0, 0.94)',glassHoverBg:'rgba(34, 34, 34, 0.92)',floatingGlassBg:'rgba(16, 16, 16, 0.85)',floatingGlassHoverBg:'rgba(34, 34, 34, 0.92)',controlBg:'rgba(32, 32, 32, 0.9)',controlHoverBg:'rgba(46, 46, 46, 0.92)',buttonBg:'rgba(62, 62, 62, 0.9)',barBg:'rgba(14, 14, 14, 0.95)',cardBgTranslucent:'rgba(28, 28, 28, 0.85)'},vn=n('preset_manager_theme',()=>{const e=(0,i.ref)('light'),n=(0,i.ref)(t(fn));let A=null;const a=(0,i.computed)(()=>({'--pm-toolbar-bg':n.value.toolbarBg,'--pm-panel-bg':n.value.panelBg,'--pm-solid-panel-bg':pmmSolidThemeColor(n.value.panelBg),'--pm-solid-glass-bg':pmmSolidThemeColor(n.value.glassBg),'--pm-card-bg':n.value.cardBg,'--pm-text-primary':n.value.textPrimary,'--pm-text-secondary':n.value.textSecondary,'--pm-border':n.value.border,'--pm-title-card-border':_pmmTitleCardBorder(n.value.panelBg),'--pm-accent':n.value.accent,'--pm-hover-bg':n.value.hoverBg,'--pm-selected-bg':n.value.selectedBg,'--pm-font-family':n.value.fontFamily,'--pm-font-weight':n.value.fontWeight,'--pm-text-shadow':n.value.textShadow,'--pm-font-size':n.value.fontSize,'--pm-line-height':n.value.lineHeight,'--pm-quote-color':n.value.quoteColor,'--pm-glass-bg':n.value.glassBg,'--pm-glass-hover-bg':n.value.glassHoverBg,'--pm-floating-glass-bg':n.value.floatingGlassBg,'--pm-floating-glass-hover-bg':n.value.floatingGlassHoverBg,'--pm-control-bg':n.value.controlBg,'--pm-control-hover-bg':n.value.controlHoverBg,'--pm-button-bg':n.value.buttonBg,'--pm-bar-bg':n.value.barBg,'--pm-card-bg-translucent':n.value.cardBgTranslucent}));
 function o(){if('light'!==e.value)if('dark'!==e.value)try{const e=window.parent.document;let{toolbarBg:t,panelBg:A,cardBg:a,textPrimary:o,textSecondary:r,border:i,accent:s,hoverBg:l,selectedBg:c,fontFamily:d,fontWeight:p,textShadow:C,fontSize:m,lineHeight:g,quoteColor:u,glassBg:x,glassHoverBg:b,floatingGlassBg:f,floatingGlassHoverBg:h,controlBg:v,controlHoverBg:y,buttonBg:B,barBg:k,cardBgTranslucent:E}=fn;
 const w=function(){const e=un()(window.parent.document),n=['.simplebar-content-wrapper','#chat'];for(const t of n){const n=e.find(t);if(n.length>0)return n.first()}return null}();if(w){let n=window.parent.getComputedStyle(w[0]).backgroundColor;'rgba(0, 0, 0, 0)'!==n&&'transparent'!==n||(n=window.parent.getComputedStyle(e.body).backgroundColor),A=xn(n,1);const a=e.querySelector('#top-bar');if(a){const e=window.parent.getComputedStyle(a).backgroundColor;'rgba(0, 0, 0, 0)'!==e&&'transparent'!==e?(t=xn(e,.95),k=xn(e,1),x=xn(e,.88),b=xn(bn(e,.15),.92),f=xn(e,.75),h=xn(bn(e,.15),.82)):(t=xn(n,.95),k=xn(n,1),x=xn(n,.88),b=xn(bn(n,.15),.92),f=xn(n,.75),h=xn(bn(n,.15),.82))}else t=xn(n,.95),k=xn(n,1),x=xn(n,.88),b=xn(bn(n,.15),.92),f=xn(n,.75),h=xn(bn(n,.15),.82);l=bn(xn(n,.9),.15)}
 const _pmmRootStyle=window.parent.getComputedStyle(e.documentElement),_pmmSmartPanel=_pmmRootStyle.getPropertyValue('--SmartThemeBlurTintColor').trim(),_pmmSmartText=_pmmRootStyle.getPropertyValue('--SmartThemeBodyColor').trim(),_pmmWrapperBg=w&&w[0]?window.parent.getComputedStyle(w[0]).backgroundColor:'',_pmmBodyBg=window.parent.getComputedStyle(e.body).backgroundColor;A=_pmmThemeSurfaceOr(_pmmSmartPanel,_pmmThemeSurfaceOr(_pmmWrapperBg,_pmmThemeSurfaceOr(_pmmBodyBg,fn.panelBg,1),1),1);const _pmmTopbar=e.querySelector('#top-bar'),_pmmTopbarBg=_pmmTopbar?window.parent.getComputedStyle(_pmmTopbar).backgroundColor:'',_pmmToolbarBase=_pmmThemeSurfaceOr(_pmmTopbarBg,A,1);t=xn(_pmmToolbarBase,.95),k=xn(_pmmToolbarBase,1),x=xn(_pmmToolbarBase,.88),b=xn(bn(_pmmToolbarBase,.15),.92),f=xn(_pmmToolbarBase,.75),h=xn(bn(_pmmToolbarBase,.15),.82),l=bn(xn(A,.9),.15);
@@ -3708,18 +3733,9 @@ export{xo as mountMainPanel,fo as toggleMainPanel,bo as unmountMainPanel};
       return;
     }
 
-    /* 一定找原 Vue modal，不找我们自己的 clone。 */
-    const titleSpan = Array.from(doc.querySelectorAll('span')).find(s => {
-      if ((s.textContent || '').trim() !== '比对结果详情') return false;
-      return !s.closest('#' + portalId);
-    });
-    if (!titleSpan) return;
-
-    const title = titleSpan.parentElement;
-    const header = title && title.parentElement;
-    const modal = header && header.parentElement;
-    const overlay = modal && modal.parentElement;
-    if (!modal || !overlay) return;
+    const modal = root.querySelector('[data-pmm-compare-modal]:not([data-pmm-diff-portal-modal])');
+    const overlay = modal?.parentElement;
+    if (!overlay) return;
 
     /* Vue 原件不移动，只隐藏。Vue 仍然完全拥有它。 */
     overlay.dataset.pmmDiffOriginal = '1';
@@ -4062,7 +4078,7 @@ export{xo as mountMainPanel,fo as toggleMainPanel,bo as unmountMainPanel};
     });
 
     const originalClose =
-      header.querySelector('.fa-xmark')?.closest('button') ||
+      modal.firstElementChild?.querySelector('.fa-xmark')?.closest('button') ||
       Array.from(modal.querySelectorAll('button')).find(btn => (btn.textContent || '').trim() === '关闭');
 
     function closePortal() {
@@ -4394,9 +4410,14 @@ export{xo as mountMainPanel,fo as toggleMainPanel,bo as unmountMainPanel};
       if (doc === parentDoc) scan(doc);
       else fixDiffDetail(doc);
       if (!doc.body) return;
-      const mo = new MutationObserver(requestScan);
+      const mo = new MutationObserver(records => {
+        if (pmmMutationsAffect(records, '#preset-manager-main-panel,#preset-manager-floating-panel,#extensionsMenu,#extensionsMenuButton,#pm-mobile-fab-standalone,#pmm-diff-detail-portal,[data-pmm-compare-modal],[data-pmm-diff-detail="1"],.pmm-content-diff-overlay')) requestScan();
+      });
       pmmRuntimeResource(mo).observe(doc.body, { childList: true, subtree: true });
-      pmmRuntimeResource(globalThis).setInterval(requestScan, 1200);
+      const view = doc.defaultView || window;
+      pmmRuntimeResource(view).addEventListener('pageshow', requestScan);
+      const breakpoint = view.matchMedia('(max-width: 768px)');
+      pmmRuntimeResource(breakpoint).addEventListener('change', requestScan);
     };
     if (doc.readyState === 'loading') pmmRuntimeResource(doc).addEventListener('DOMContentLoaded', boot, { once:true });
     else boot();
@@ -6280,7 +6301,9 @@ export{xo as mountMainPanel,fo as toggleMainPanel,bo as unmountMainPanel};
     pmmRuntimeResource(DOC.head).appendChild(style);
   }
 
-  const observer = new MutationObserver(queueScan);
+  const observer = new MutationObserver(records => {
+    if (pmmMutationsAffect(records, ROOT_SELECTOR)) queueScan();
+  });
   pmmRuntimeResource(observer).observe(DOC.body || DOC.documentElement, { childList: true, subtree: true });
   pmmRuntimeResource(DOC).addEventListener('click', event => {
     const button = event.target?.closest?.('button');
@@ -10043,8 +10066,12 @@ console.info('[预设工坊] V2.98.10 已加载：收藏多选拖入文件夹改
   }
 
   function onNativeDragStart(event) {
-    if (!event.isTrusted || !pending) return;
-    clearPending();
+    const session = active || pending;
+    if (!installed || !event.isTrusted || !session || !session.source.contains(event.target)) return;
+    // Compatibility owns this touch gesture, including the long-press delay.
+    // Do not let native drag cancel it or initialise a second drag in Vue.
+    event.preventDefault();
+    event.stopImmediatePropagation();
   }
 
   function onContextMenu(event) {
@@ -10159,14 +10186,23 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
   try { enabled = TOP.localStorage?.getItem(STORAGE_KEY) !== '0'; } catch (_) {}
 
   // Portals are outside the main panel; enumerate only surfaces owned by the workshop.
-  const scope = ':is(#preset-manager-main-panel,#preset-manager-floating-panel,.pmm-variable-overlay,.pmm-preset-batch-overlay,.pmm-switch-snapshot-overlay,.pmm-switch-editor-overlay,.pmm-wbs-overlay,#pmm-preset-regex-transfer-overlay,#pmm-flat-drop-group-chooser,#pmm-snapshot-backup,.pmm-content-diff-overlay,[data-pmm-glass-portal],[data-pmm-multi-drag-tone],.pmm-wb-multi-drag-float)';
+  const surfaces = [
+    '#preset-manager-main-panel', '#preset-manager-floating-panel', '.pmm-variable-overlay',
+    '.pmm-preset-batch-overlay', '.pmm-switch-snapshot-overlay', '.pmm-switch-editor-overlay',
+    '.pmm-wbs-overlay', '#pmm-preset-regex-transfer-overlay', '#pmm-flat-drop-group-chooser',
+    '#pmm-snapshot-backup', '.pmm-content-diff-overlay', '[data-pmm-glass-portal]',
+    '[data-pmm-multi-drag-tone]', '.pmm-wb-multi-drag-float',
+  ];
+  const scope = ':is(' + surfaces.join(',') + ')';
   const off = 'html[data-pmm-glass="off"]';
+  // A concrete ancestor per selector lets the browser reject unrelated chat nodes cheaply.
+  const blurSelectors = surfaces.flatMap(surface =>
+    ['', ' *', '::before', '::after', ' *::before', ' *::after'].map(suffix => off + ' ' + surface + suffix)
+  ).join(',\n');
   const css = `
     /* Important layer rules also override the theme's unlayered important rules. */
     @layer pmm-glass-preference {
-      ${off} ${scope}, ${off} ${scope} *,
-      ${off} ${scope}::before, ${off} ${scope}::after,
-      ${off} ${scope} *::before, ${off} ${scope} *::after {
+      ${blurSelectors} {
         backdrop-filter:none!important; -webkit-backdrop-filter:none!important;
       }
       /* Do not start deferred blur transitions as offscreen cards enter the viewport. */
@@ -12452,7 +12488,9 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
   }
 
   installStyle();
-  mainObserver = new MutationObserverCtor(scheduleSync);
+  mainObserver = new MutationObserverCtor(records => {
+    if (pmmMutationsAffect(records, '#preset-manager-main-panel', true)) scheduleSync();
+  });
   pmmRuntimeResource(mainObserver).observe(DOC.documentElement, { childList:true, subtree:true });
   pmmRuntimeResource(MEDIA)?.addEventListener?.('change', scheduleSync);
   pmmRuntimeResource(TOP).addEventListener?.('pmm-mobile-dnd-compat-change', onDragCompatChange);
@@ -13526,7 +13564,9 @@ html.pmm-dnd-compat-active #preset-manager-main-panel{user-select:none!important
   function install() {
     for (const currentDocument of documents()) installStyle(currentDocument);
     observers = documents().map(currentDocument => {
-      const currentObserver = new MutationObserverCtor(scheduleSync);
+      const currentObserver = new MutationObserverCtor(records => {
+        if (pmmMutationsAffect(records, '#preset-manager-floating-panel,#settings_preset_openai,select[data-preset-manager-for*="openai"]', true)) scheduleSync();
+      });
       pmmRuntimeResource(currentObserver).observe(currentDocument.documentElement, { childList:true, subtree:true, attributes:true, attributeFilter:['style', 'class'] });
       return currentObserver;
     });
@@ -17250,7 +17290,9 @@ ${PANEL_SELECTOR} .section-group.pmm-nested-section--hidden { display: none !imp
   }
 
   installStyle();
-  observer = new win.MutationObserver(schedule);
+  observer = new win.MutationObserver(records => {
+    if (pmmMutationsAffect(records, PANEL_SELECTOR, true)) schedule();
+  });
   pmmRuntimeResource(observer).observe(DOC.documentElement, {
     childList: true,
     subtree: true,
@@ -17495,7 +17537,9 @@ html.${ROOT_CLASS} ${PANEL_SELECTOR} .${COMPACT_CLASS} > .prompt-editor__expand-
   resizeObserver = typeof win.ResizeObserver === 'function'
     ? new win.ResizeObserver(schedule)
     : null;
-  mutationObserver = new win.MutationObserver(schedule);
+  mutationObserver = new win.MutationObserver(records => {
+    if (pmmMutationsAffect(records, PANEL_SELECTOR, true)) schedule();
+  });
   pmmRuntimeResource(mutationObserver).observe(DOC.documentElement, { childList: true, subtree: true, characterData: true });
   pmmRuntimeResource(TOP).addEventListener?.('resize', onResize);
   pmmRuntimeResource(TOP).addEventListener?.('orientationchange', onResize);
@@ -18187,13 +18231,25 @@ console.info('[预设工坊] V2.97.21 已加载：快照模式仅保留条目与
     }
   }
 
+  // Vue reuses the container when switching between single and split layouts.
+  // Only its own class changes and the loss of its direct handles affect sizing.
+  function resizeNeedsSync(record) {
+    const target = record.target;
+    if (record.type === 'attributes') return target.matches(CONTAINER_SELECTOR);
+    if (!target.closest?.(CONTAINER_SELECTOR)) {
+      return pmmMutationsAffect([record], CONTAINER_SELECTOR);
+    }
+    return target.matches(CONTAINER_SELECTOR) &&
+      Array.from(record.removedNodes).some(node => node.classList?.contains(HANDLE_CLASS));
+  }
+
+  const desktopMedia = TOP.matchMedia?.('(min-width: 769px) and (any-pointer: fine), (min-width: 769px) and (any-hover: hover)');
   let observer = null;
   function startObserver() {
     if (observer || typeof TOP.MutationObserver !== 'function') return;
     try {
       observer = new TOP.MutationObserver(records => {
-        if (!records?.some?.(record => record.type === 'childList' || record.target?.matches?.('.pm-panel-container'))) return;
-        scanAndMount();
+        if (records.some(resizeNeedsSync)) scanAndMount();
       });
       pmmRuntimeResource(observer).observe(DOC.body || DOC.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
     } catch (_) {}
@@ -18201,6 +18257,7 @@ console.info('[预设工坊] V2.97.21 已加载：快照模式仅保留条目与
 
   function cleanup() {
     activeSessionCleanup?.();
+    if (desktopMedia) pmmRuntimeResource(desktopMedia).removeEventListener?.('change', scanAndMount);
     activeSessionCleanup = null;
     pmmRuntimeResource(observer)?.disconnect();
     observer = null;
@@ -18217,6 +18274,7 @@ console.info('[预设工坊] V2.97.21 已加载：快照模式仅保留条目与
   }
   scanAndMount();
   startObserver();
+  if (desktopMedia) pmmRuntimeResource(desktopMedia).addEventListener?.('change', scanAndMount);
 
   TOP[API_KEY] = {
     cleanup,

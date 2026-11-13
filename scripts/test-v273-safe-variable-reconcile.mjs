@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-const source = (await readFile(new URL('../dist/workshop-v2.73.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+const source = (await readFile(new URL('../dist/workshop-v3.08.js', import.meta.url), 'utf8')).replace(/pmmRuntimeResource\((\w+)\)/g, '$1');
 
 assert.ok(source.includes('function completePromptContentsInPanel(panel)'), '缺少完整预设数据读取');
 assert.ok(source.includes('component.props?.prompts'), '没有优先读取面板的完整 prompts 数据');
 assert.ok(source.includes("else return null;"), 'DOM 数据不完整时仍可能继续误清变量');
-assert.ok(source.includes('const observer = new MutationObserver(queueScan);'), '普通折叠或滚动仍会触发变量清理');
+assert.ok(source.includes('if (pmmMutationsAffect(records, ROOT_SELECTOR)) queueScan();'), '普通折叠或滚动仍会触发变量清理');
 assert.ok(source.includes("if (button && /撤销|删除/.test(label)) queueBasketReconcile();"), '撤销或删除后不会安全校准变量');
 assert.ok(!source.includes('收集本条已有变量'), '旧变量整条收集入口重新出现');
 
@@ -16,10 +16,7 @@ const blockEnd = source.indexOf('\n;(()=>{\n  /* 预设工坊 V2.58', blockStart
 assert.ok(blockStart >= 0 && blockEnd > blockStart, '无法隔离变量助手运行块');
 
 let runnable = source.slice(blockStart, blockEnd);
-runnable = runnable.replace(
-  "  console.info('[预设工坊] V2.73 已加载：新增变量稳定保留，仅在撤销或删除后用完整预设数据安全校准。');\n})();",
-  '  globalThis.__safeVariableTest = { addVariables, basketFor, reconcileBasket };\n})();',
-);
+runnable = runnable.replace(/\}\)\(\);\s*$/, 'globalThis.__safeVariableTest = { addVariables, basketFor, reconcileBasket };\n})();');
 
 const fakeDocument = {
   body: {},
@@ -33,6 +30,7 @@ const fakeDocument = {
   createElement() { return { id: '', style: { setProperty() {} }, textContent: '' }; },
 };
 const sandbox = {
+  pmmRuntimeResource: target => target,
   console,
   document: fakeDocument,
   requestAnimationFrame(callback) { callback(); },
