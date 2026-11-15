@@ -1,6 +1,6 @@
-import { readWorkshopMode, installWorkshopModeSettings } from './workshop-mode.js?v=3.2.3';
+import { readWorkshopMode, installWorkshopModeSettings } from './workshop-mode.js?v=3.2.4';
 const EXTENSION_NAME = '🧩预设工坊（Gecko兼容测试版）';
-const EXTENSION_VERSION = '3.2.3';
+const EXTENSION_VERSION = '3.2.4';
 const RUNTIME_ID = 'TH-script--🧩预设工坊（Gecko 兼容扩展）--45dd76e4-8cce-41df-921f-9ebc856a9f25';
 const LEGACY_IFRAME_PREFIX = 'TH-script--🧩预设工坊';
 const EXTENSION_FOLDER_NAME = 'ST-Preset-Workshop-Gecko';
